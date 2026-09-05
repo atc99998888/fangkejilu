@@ -1,7 +1,7 @@
 export async function onRequestGet(context) {
   const { request, env } = context;
 
-  // 1. 后台访问密码（可自由修改）
+  // 后台访问密码（可自由修改）
   const SECRET_KEY = "123456"; 
   const url = new URL(request.url);
 
@@ -9,60 +9,33 @@ export async function onRequestGet(context) {
     return new Response("未授权访问：请在 URL 末尾加上 ?key=你的密码", { status: 403 });
   }
 
-  // 检查 D1 数据库绑定
-  if (!env.DB) {
-    return new Response("配置错误：Cloudflare Pages 未绑定名称为 DB 的 D1 数据库！请前往 Settings -> Functions 检查绑定。", { 
-      status: 500,
-      headers: { "Content-Type": "text/plain; charset=utf-8" }
-    });
-  }
-
   try {
-    // 2. 数据库强行初始化（确保表一定存在）
-    await env.DB.exec(`
-      CREATE TABLE IF NOT EXISTS visits (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        domain TEXT NOT NULL,
-        city TEXT DEFAULT 'Unknown',
-        country TEXT DEFAULT 'Unknown',
-        visit_time DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+    // 1. 查询全站总访问量
+    const totalVisitsRes = await env.DB.prepare(`SELECT COUNT(*) as total FROM visits`).first();
+    const totalVisits = totalVisitsRes?.total || 0;
 
-    // 3. 查询全站总访问量
-    const totalRes = await env.DB.prepare(`SELECT COUNT(*) as total FROM visits`).first();
-    const totalVisits = totalRes?.total || 0;
+    // 2. 查询域名排行榜
+    const domainRankRes = await env.DB.prepare(`
+      SELECT domain, COUNT(*) as domain_total 
+      FROM visits 
+      GROUP BY domain 
+      ORDER BY domain_total DESC
+    `).all();
+    const domainRank = domainRankRes?.results || [];
 
-    // 4. 查询域名排行榜
-    let domainRank = [];
-    if (totalVisits > 0) {
-      const domainRankRes = await env.DB.prepare(`
-        SELECT domain, COUNT(*) as domain_total 
-        FROM visits 
-        GROUP BY domain 
-        ORDER BY domain_total DESC
-      `).all();
-      domainRank = domainRankRes?.results || [];
-    }
+    // 3. 查询明细数据
+    const detailsRes = await env.DB.prepare(`
+      SELECT domain, country, city, COUNT(*) as city_visits 
+      FROM visits 
+      GROUP BY domain, country, city 
+      ORDER BY domain ASC, city_visits DESC
+    `).all();
+    const details = detailsRes?.results || [];
 
-    // 5. 查询各域名详细城市数据
-    let details = [];
-    if (totalVisits > 0) {
-      const detailsRes = await env.DB.prepare(`
-        SELECT domain, country, city, COUNT(*) as city_visits 
-        FROM visits 
-        GROUP BY domain, country, city 
-        ORDER BY domain ASC, city_visits DESC
-      `).all();
-      details = detailsRes?.results || [];
-    }
-
-    // 指标统计
     const totalDomains = domainRank.length;
     const uniqueCountries = new Set(details.map(d => d.country)).size;
     const uniqueCities = new Set(details.map(d => d.city)).size;
 
-    // 组织分组数据
     const groupedDetails = {};
     details.forEach(item => {
       if (!groupedDetails[item.domain]) {
@@ -71,7 +44,6 @@ export async function onRequestGet(context) {
       groupedDetails[item.domain].push(item);
     });
 
-    // 生成域名排行榜列表
     let domainRankHtml = domainRank.map((item, index) => `
       <tr>
         <td style="text-align: center;"><span class="rank-badge rank-${index + 1}">${index + 1}</span></td>
@@ -80,7 +52,6 @@ export async function onRequestGet(context) {
       </tr>
     `).join('');
 
-    // 生成域名统计卡片列表
     let domainCardsHtml = domainRank.map(item => {
       const domain = item.domain;
       const list = groupedDetails[domain] || [];
@@ -110,7 +81,6 @@ export async function onRequestGet(context) {
       `;
     }).join('');
 
-    // 构建仪表盘前端界面
     const html = `
       <!DOCTYPE html>
       <html>
@@ -149,7 +119,6 @@ export async function onRequestGet(context) {
           .domain-header h3 { margin: 0; font-size: 16px; color: #333; }
           .domain-header h3 span { color: #0066ff; }
           .domain-total-badge { background: #e8f3ff; color: #0066ff; padding: 4px 12px; border-radius: 15px; font-size: 13px; font-weight: 500; }
-          .empty-tip { text-align: center; color: #888; padding: 30px; font-size: 15px; }
         </style>
       </head>
       <body>
@@ -158,7 +127,6 @@ export async function onRequestGet(context) {
             <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
-          <!-- 概览面板 -->
           <div class="stats-grid">
             <div class="stat-card"><div class="label">全站总访问量 (PV)</div><div class="num">${totalVisits}</div></div>
             <div class="stat-card"><div class="label">已被访问域名数</div><div class="num">${totalDomains}</div></div>
@@ -166,7 +134,6 @@ export async function onRequestGet(context) {
             <div class="stat-card"><div class="label">覆盖城市数</div><div class="num">${uniqueCities}</div></div>
           </div>
 
-          <!-- 排行榜 -->
           <div class="panel">
             <h2 class="panel-title">🏆 域名流量排行榜</h2>
             <table>
@@ -174,14 +141,13 @@ export async function onRequestGet(context) {
                 <tr><th style="width: 80px; text-align: center;">排名</th><th>访问域名</th><th>累计访客量</th></tr>
               </thead>
               <tbody>
-                ${domainRankHtml || '<tr><td colspan="3" class="empty-tip">数据库结构已初始化就绪，等待访客数据传入...</td></tr>'}
+                ${domainRankHtml || '<tr><td colspan="3" style="text-align:center;">数据库已就绪，等待访客数据上报...</td></tr>'}
               </tbody>
             </table>
           </div>
 
-          <!-- 各域名明细 -->
           <h2 style="color: #2c3e50; font-size: 18px; margin-bottom: 15px;">📍 各域名详细访客来源</h2>
-          ${domainCardsHtml || '<div class="panel empty-tip">数据库当前为空。访问一次挂载上报脚本的网页后，数据将在此显示。</div>'}
+          ${domainCardsHtml || '<div class="panel" style="text-align:center; padding:30px; color:#888;">暂无明细数据。访问任意挂载上报代码的网站首页即可自动计入！</div>'}
 
         </div>
       </body>
@@ -190,8 +156,7 @@ export async function onRequestGet(context) {
 
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
   } catch (error) {
-    // 精准打出 SQL 或 数据库报错
-    return new Response(`后台数据库异常：${error.message}\n${error.stack}`, { 
+    return new Response(`后台数据库交互异常：${error.message}\n${error.stack}`, { 
       status: 500,
       headers: { "Content-Type": "text/plain; charset=utf-8" }
     });
@@ -249,7 +214,7 @@ function translateCity(city) {
     'Shaoyang': '邵阳', 'Yueyang': '岳阳', 'Changde': '常德', 'Zhangjiajie': '张家界',
     'Yiyang': '益阳', 'Chenzhou': '郴州', 'Yongzhou': '永州', 'Huaihua': '怀化',
     'Loudi': '娄底', 'Xiangxi': '湘西',
-    'Chengdu': '成都', 'Zigong': '自贡', 'Panzhihua': '攀zhi花', 'Luzhou': '泸州',
+    'Chengdu': '成都', 'Zigong': '自贡', 'Panzhihua': '攀枝花', 'Luzhou': '泸州',
     'Deyang': '德阳', 'Mianyang': '绵阳', 'Guangyuan': '广元', 'Suining': '遂宁',
     'Neijiang': '内江', 'Leshan': '乐山', 'Nanchong': '南充', 'Meishan': '眉山',
     'Yibin': '宜宾', 'Guang\'an': '广安', 'Guangan': '广安', 'Dazhou': '达州',
