@@ -1,43 +1,48 @@
 export async function onRequestGet(context) {
   const { request, env } = context;
 
-  // 后台访问密码（可自由修改）
-  const SECRET_KEY = "123456"; 
+  // 后台访问密码
+  const SECRET_KEY = "123456"; 
   const url = new URL(request.url);
 
   if (url.searchParams.get("key") !== SECRET_KEY) {
     return new Response("未授权访问：请在 URL 末尾加上 ?key=你的密码", { status: 403 });
   }
 
+  // 检查 D1 绑定是否存在
+  if (!env || !env.DB) {
+    return new Response("数据库未绑定：请在 Cloudflare Pages 设置中绑定名为 DB 的 D1 数据库", { status: 500 });
+  }
+
   try {
-    // 自动初始化数据表（单行 SQL）
+    // 自动初始化数据表
     await env.DB.exec("CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL, ip TEXT DEFAULT 'Unknown', city TEXT DEFAULT 'Unknown', country TEXT DEFAULT 'Unknown', visit_time DATETIME DEFAULT CURRENT_TIMESTAMP);");
 
-    // 1. 获取【今日访问量】与【昨日访问量】(基于北京时间 UTC+8，每日0点清零重新计数)
+    // 1. 获取【今日访问量】与【昨日访问量】
     const todayRes = await env.DB.prepare(`
-      SELECT COUNT(*) as count FROM visits 
-      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
+      SELECT COUNT(*) as count FROM visits 
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
     `).first();
     const todayVisits = todayRes?.count || 0;
 
     const yesterdayRes = await env.DB.prepare(`
-      SELECT COUNT(*) as count FROM visits 
-      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
+      SELECT COUNT(*) as count FROM visits 
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
-    // 2. 获取最近 7 天每日访问量 (折线图)
+    // 2. 获取最近 7 天每日访问量
     const last7DaysRes = await env.DB.prepare(`
-      SELECT DATE(DATETIME(visit_time, '+8 hours')) as date, COUNT(*) as count 
-      FROM visits 
-      WHERE DATE(DATETIME(visit_time, '+8 hours')) >= DATE(DATETIME('now', '+8 hours', '-6 days'))
-      GROUP BY DATE(DATETIME(visit_time, '+8 hours'))
+      SELECT DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) as date, COUNT(*) as count 
+      FROM visits 
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) >= DATE(DATETIME('now', '+8 hours', '-6 days'))
+      GROUP BY DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours'))
       ORDER BY date ASC
     `).all();
 
     const last7DaysData = [];
     const dbDaysMap = {};
-    (last7DaysRes?.results || []).forEach(row => { dbDaysMap[row.date] = row.count; });
+    (last7DaysRes?.results || []).forEach(row => { if(row.date) dbDaysMap[row.date] = row.count; });
 
     for (let i = 6; i >= 0; i--) {
       const d = new Date(Date.now() + 8 * 3600 * 1000 - i * 24 * 3600 * 1000);
@@ -49,32 +54,32 @@ export async function onRequestGet(context) {
       });
     }
 
-    // 3. 查询【今日】域名排行榜 (今天0点重置后)
+    // 3. 查询【今日】域名排行榜
     const domainRankRes = await env.DB.prepare(`
-      SELECT domain, COUNT(*) as domain_total 
-      FROM visits 
-      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
-      GROUP BY domain 
+      SELECT domain, COUNT(*) as domain_total 
+      FROM visits 
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
+      GROUP BY domain 
       ORDER BY domain_total DESC
     `).all();
     const domainRank = domainRankRes?.results || [];
 
-    // 4. 查询【今日】城市排行榜 (今天0点重置后)
+    // 4. 查询【今日】城市排行榜
     const cityRankRes = await env.DB.prepare(`
-      SELECT country, city, COUNT(*) as city_total 
-      FROM visits 
-      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
-      GROUP BY country, city 
-      ORDER BY city_total DESC 
+      SELECT country, city, COUNT(*) as city_total 
+      FROM visits 
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
+      GROUP BY country, city 
+      ORDER BY city_total DESC 
       LIMIT 15
     `).all();
     const cityRank = cityRankRes?.results || [];
 
-    // 5. 查询【今日】各域名下的详细访问记录 (今天0点重置后)
+    // 5. 查询【今日】详细记录
     const detailsRes = await env.DB.prepare(`
-      SELECT domain, ip, country, city, visit_time 
-      FROM visits 
-      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
+      SELECT domain, ip, country, city, visit_time 
+      FROM visits 
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
       ORDER BY id DESC
     `).all();
     const details = detailsRes?.results || [];
@@ -106,7 +111,7 @@ export async function onRequestGet(context) {
       </tr>
     `).join('');
 
-    // 各域名明细卡片 HTML（仅包含今日记录）
+    // 各域名明细卡片 HTML
     let domainCardsHtml = domainRank.map((item, index) => {
       const domain = item.domain;
       const decodedDomainName = punycodeToUnicode(domain);
@@ -155,7 +160,7 @@ export async function onRequestGet(context) {
           .container { max-width: 1000px; margin: 0 auto; }
           .header { text-align: center; margin-bottom: 20px; }
           .header h1 { margin: 0; color: #1a1a1a; font-size: 22px; }
-          
+          
           .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
           .stat-card { background: #fff; padding: 16px 20px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); text-align: center; }
           .stat-card .num { font-size: 24px; font-weight: bold; color: #0066ff; margin-top: 4px; }
@@ -197,7 +202,6 @@ export async function onRequestGet(context) {
             <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
-          <!-- 1. 概览 (今日/昨日访问) -->
           <div class="stats-grid">
             <div class="stat-card">
               <div class="label">今日访问量</div>
@@ -211,7 +215,6 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 2. 最近 7 天访问趋势图 -->
           <div class="panel">
             <h2 class="panel-title">📈 最近 7 天访问趋势图</h2>
             <div class="chart-container">
@@ -219,7 +222,6 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 3. 今日域名排行榜 -->
           <div class="panel">
             <h2 class="panel-title">
               🏆 今日域名流量排行榜
@@ -235,7 +237,6 @@ export async function onRequestGet(context) {
             </table>
           </div>
 
-          <!-- 4. 今日城市排行榜 -->
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 今日热门访问城市排行榜 (Top 15)
@@ -251,7 +252,6 @@ export async function onRequestGet(context) {
             </table>
           </div>
 
-          <!-- 5. 今日各域名详细访客记录 -->
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
             <h2 style="color: #2c3e50; font-size: 16px; margin: 0;">📍 各域名明细记录 (点击展开)</h2>
             <span style="font-size: 12px; color: #27ae60;">⏱️ 仅展示今日数据 (每天0点重置)</span>
@@ -273,7 +273,6 @@ export async function onRequestGet(context) {
             }
           }
 
-          // 原生 Canvas 渲染 7 天 K线/趋势折线图
           (function drawChart() {
             const chartData = ${JSON.stringify(last7DaysData)};
             const canvas = document.getElementById('trendChart');
@@ -359,14 +358,13 @@ export async function onRequestGet(context) {
 
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
   } catch (error) {
-    return new Response(`数据库交互异常：${error.message}\n${error.stack}`, { 
+    return new Response(`数据库交互异常：${error.message}\n${error.stack}`, { 
       status: 500,
       headers: { "Content-Type": "text/plain; charset=utf-8" }
     });
   }
 }
 
-// Punycode 解码算法
 function decodePunycodePart(input) {
   const BASE = 36, TMIN = 1, TMAX = 26, SKEW = 38, DAMP = 700, INITIAL_BIAS = 72, INITIAL_N = 128;
   function adapt(delta, numPoints, firstTime) {
