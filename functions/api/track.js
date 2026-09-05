@@ -9,23 +9,8 @@ export async function onRequestPost(context) {
   };
 
   try {
-    // 1. 确保基础表存在
-    await env.DB.exec(`
-      CREATE TABLE IF NOT EXISTS visits (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        domain TEXT NOT NULL,
-        city TEXT DEFAULT 'Unknown',
-        country TEXT DEFAULT 'Unknown',
-        visit_time DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // 2. 自动兼容旧表：如果旧表没有 ip 字段则自动补上（防止旧表插入报错）
-    try {
-      await env.DB.exec(`ALTER TABLE visits ADD COLUMN ip TEXT DEFAULT 'Unknown';`);
-    } catch (e) {
-      // 如果 ip 字段已存在则忽略错误
-    }
+    // 自动全新初始化数据表（单行标准 SQL，防止语法解析截断）
+    await env.DB.exec("CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL, ip TEXT DEFAULT 'Unknown', city TEXT DEFAULT 'Unknown', country TEXT DEFAULT 'Unknown', visit_time DATETIME DEFAULT CURRENT_TIMESTAMP);");
 
     // 获取来源域名
     const referer = request.headers.get("referer") || request.headers.get("origin") || "";
@@ -41,7 +26,7 @@ export async function onRequestPost(context) {
       domain = url.hostname;
     }
 
-    // 获取访客 IP、城市和国家
+    // 获取访客 IP、城市和国家（Cloudflare 边缘节点自动提供）
     const ip = request.headers.get("cf-connecting-ip") || "Unknown";
     const city = request.cf?.city || 'Unknown';
     const country = request.cf?.country || 'Unknown';
