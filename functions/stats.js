@@ -1,7 +1,7 @@
 export async function onRequestGet(context) {
   const { request, env } = context;
 
-  // 请自行修改下面的后台访问密码
+  // 后台查看密码（可自行修改）
   const SECRET_KEY = "123456"; 
   const url = new URL(request.url);
 
@@ -14,7 +14,7 @@ export async function onRequestGet(context) {
       SELECT domain, country, city, COUNT(*) as total_visits 
       FROM visits 
       GROUP BY domain, country, city 
-      ORDER BY domain ASC, total_visits DESC
+      ORDER BY total_visits DESC
     `).all();
 
     let rowsHtml = (results || []).map(row => `
