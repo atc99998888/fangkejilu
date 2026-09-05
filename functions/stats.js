@@ -2,7 +2,7 @@ export async function onRequestGet(context) {
   const { request, env } = context;
 
   // 后台访问密码（可自由修改）
-  const SECRET_KEY = "123456"; 
+  const SECRET_KEY = "123456"; 
   const url = new URL(request.url);
 
   if (url.searchParams.get("key") !== SECRET_KEY) {
@@ -10,17 +10,8 @@ export async function onRequestGet(context) {
   }
 
   try {
-    // 自动全新初始化数据表（包含 ip、visit_time 等全量字段）
-    await env.DB.exec(`
-      CREATE TABLE IF NOT EXISTS visits (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        domain TEXT NOT NULL,
-        ip TEXT DEFAULT 'Unknown',
-        city TEXT DEFAULT 'Unknown',
-        country TEXT DEFAULT 'Unknown',
-        visit_time DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+    // 自动全新初始化数据表（单行标准 SQL，防止语法解析截断）
+    await env.DB.exec("CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL, ip TEXT DEFAULT 'Unknown', city TEXT DEFAULT 'Unknown', country TEXT DEFAULT 'Unknown', visit_time DATETIME DEFAULT CURRENT_TIMESTAMP);");
 
     // 1. 查询全站总访问量
     const totalVisitsRes = await env.DB.prepare(`SELECT COUNT(*) as total FROM visits`).first();
@@ -28,27 +19,27 @@ export async function onRequestGet(context) {
 
     // 2. 查询域名排行榜
     const domainRankRes = await env.DB.prepare(`
-      SELECT domain, COUNT(*) as domain_total 
-      FROM visits 
-      GROUP BY domain 
+      SELECT domain, COUNT(*) as domain_total 
+      FROM visits 
+      GROUP BY domain 
       ORDER BY domain_total DESC
     `).all();
     const domainRank = domainRankRes?.results || [];
 
     // 3. 查询各域名下的国家和城市汇总数据
     const detailsRes = await env.DB.prepare(`
-      SELECT domain, country, city, COUNT(*) as city_visits 
-      FROM visits 
-      GROUP BY domain, country, city 
+      SELECT domain, country, city, COUNT(*) as city_visits 
+      FROM visits 
+      GROUP BY domain, country, city 
       ORDER BY domain ASC, city_visits DESC
     `).all();
     const details = detailsRes?.results || [];
 
     // 4. 查询最近 50 条详细访问日志（含具体时间与 IP）
     const recentLogsRes = await env.DB.prepare(`
-      SELECT domain, ip, country, city, visit_time 
-      FROM visits 
-      ORDER BY id DESC 
+      SELECT domain, ip, country, city, visit_time 
+      FROM visits 
+      ORDER BY id DESC 
       LIMIT 50
     `).all();
     const recentLogs = recentLogsRes?.results || [];
@@ -128,7 +119,7 @@ export async function onRequestGet(context) {
           .container { max-width: 1000px; margin: 0 auto; }
           .header { text-align: center; margin-bottom: 25px; }
           .header h1 { margin: 0; color: #1a1a1a; font-size: 26px; }
-          
+          
           .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 25px; }
           .stat-card { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); text-align: center; }
           .stat-card .num { font-size: 28px; font-weight: bold; color: #0066ff; margin-top: 5px; }
@@ -210,7 +201,7 @@ export async function onRequestGet(context) {
 
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
   } catch (error) {
-    return new Response(`数据库交互异常：${error.message}\n${error.stack}`, { 
+    return new Response(`数据库交互异常：${error.message}\n${error.stack}`, { 
       status: 500,
       headers: { "Content-Type": "text/plain; charset=utf-8" }
     });
@@ -321,4 +312,3 @@ function translateCity(city) {
   };
   return cityMap[city] || city;
 }
-
