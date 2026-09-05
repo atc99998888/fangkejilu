@@ -71,7 +71,7 @@ export async function onRequestGet(context) {
       });
     }
 
-    // 4. 查询【今日】与【昨日】域名数据（用于对比）
+    // 4. 查询【今日】与【昨日】域名数据
     const domainRankRes = await env.DB.prepare(`
       SELECT domain, COUNT(*) as domain_total 
       FROM visits 
@@ -92,7 +92,7 @@ export async function onRequestGet(context) {
       yesterdayDomainMap[item.domain] = item.domain_total;
     });
 
-    // 5. 查询【今日】与【昨日】城市数据（移除 LIMIT 限制，排列所有城市）
+    // 5. 查询【今日】与【昨日】城市数据（全量排列）
     const cityRankRes = await env.DB.prepare(`
       SELECT country, city, COUNT(*) as city_total 
       FROM visits 
@@ -132,9 +132,11 @@ export async function onRequestGet(context) {
     const todayTableRowsHtml = renderTableRows(todayDetails);
     const yesterdayTableRowsHtml = renderTableRows(yesterdayDetails);
 
-    // 构建【按域名归类】和【按城市归类】的数据映射，方便嵌入排行榜展开层
+    // 构建【按域名归类】和【按城市归类】的数据映射
     const domainDetailsMap = {};
     const cityDetailsMap = {};
+    // 地图数据映射（城市中文名 -> 访问量）
+    const mapCityCountData = {};
 
     todayDetails.forEach(item => {
       // 域名归类
@@ -145,9 +147,21 @@ export async function onRequestGet(context) {
       const cityKey = `${item.country}_${item.city}`;
       if (!cityDetailsMap[cityKey]) cityDetailsMap[cityKey] = [];
       cityDetailsMap[cityKey].push(item);
+
+      // 地图城市计数
+      const zhCity = translateCity(item.city);
+      if (zhCity !== '未知城市') {
+        mapCityCountData[zhCity] = (mapCityCountData[zhCity] || 0) + 1;
+      }
     });
 
-    // 1. 生成可展开的域名排行榜 HTML (含昨日对比)
+    // 格式化地图所需数据 [{name: '北京', value: 12}, ...]
+    const mapDataArray = Object.keys(mapCityCountData).map(cityName => ({
+      name: cityName,
+      value: mapCityCountData[cityName]
+    }));
+
+    // 1. 生成可展开的域名排行榜 HTML
     let domainRankHtml = domainRank.map((item, index) => {
       const domain = item.domain;
       const list = domainDetailsMap[domain] || [];
@@ -187,7 +201,7 @@ export async function onRequestGet(context) {
       `;
     }).join('');
 
-    // 2. 生成可展开的城市排行榜 HTML (含昨日对比，已全量列出)
+    // 2. 生成可展开的城市排行榜 HTML (全量展示)
     let cityRankHtml = cityRank.map((item, index) => {
       const cityKey = `${item.country}_${item.city}`;
       const list = cityDetailsMap[cityKey] || [];
@@ -234,6 +248,9 @@ export async function onRequestGet(context) {
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>多域名访客数据统计控制台</title>
+        <!-- 引入 ECharts 库与中国地图 JS -->
+        <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/echarts@4.9.0/map/js/china.js"></script>
         <style>
           * { box-sizing: border-box; }
           body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background: #f0f2f5; color: #333; margin: 0; }
@@ -253,6 +270,7 @@ export async function onRequestGet(context) {
           .panel-title .sub-tip { font-size: 12px; color: #27ae60; font-weight: normal; }
 
           .chart-container { position: relative; width: 100%; height: 220px; margin-top: 10px; }
+          .map-container { position: relative; width: 100%; height: 420px; margin-top: 10px; }
           canvas { width: 100%!important; height: 100%!important; }
 
           table { width: 100%; border-collapse: collapse; margin-top: 4px; }
@@ -271,7 +289,21 @@ export async function onRequestGet(context) {
           .inner-table-wrapper table { background: #fff; }
           .inner-table-wrapper th { background-color: #eaf2f9; }
 
-          code { background: #f1f3f5; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #d63384; }
+          /* 截断过长 IPv6 地址 */
+          code { 
+            background: #f1f3f5; 
+            padding: 2px 6px; 
+            border-radius: 4px; 
+            font-family: monospace; 
+            font-size: 12px; 
+            color: #d63384; 
+            max-width: 170px;
+            display: inline-block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            vertical-align: middle;
+          }
 
           .rank-badge { display: inline-block; width: 20px; height: 20px; line-height: 20px; border-radius: 50%; background: #e0e0e0; color: #333; font-weight: bold; font-size: 11px; text-align: center; }
           .rank-1 { background: #ffd700; color: #fff; }
@@ -345,7 +377,16 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 3. 今日域名排行榜（点击整行展开明细） -->
+          <!-- 3. 今日城市分布式访客地图 (ECharts) -->
+          <div class="panel">
+            <h2 class="panel-title">
+              🗺️ 今日城市分布式访客地图
+              <span class="sub-tip">💡 点击各地区可查看具体访客量</span>
+            </h2>
+            <div id="chinaMap" class="map-container"></div>
+          </div>
+
+          <!-- 4. 今日域名排行榜（点击整行展开明细） -->
           <div class="panel">
             <h2 class="panel-title">
               🏆 今日域名流量排行榜 (点击展开明细)
@@ -368,7 +409,7 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 4. 城市排行榜（点击整行展开明细） -->
+          <!-- 5. 城市排行榜（点击整行展开明细） -->
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问城市排行榜 (点击展开明细)
@@ -412,6 +453,7 @@ export async function onRequestGet(context) {
             }
           }
 
+          // 绘制 7 天趋势图
           (function drawChart() {
             const chartData = ${JSON.stringify(last7DaysData)};
             const canvas = document.getElementById('trendChart');
@@ -489,6 +531,70 @@ export async function onRequestGet(context) {
               ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto';
               ctx.fillText(p.displayDate, p.x, height - 10);
             });
+          })();
+
+          // 绘制城市分布式地图 (ECharts)
+          (function initMap() {
+            const mapDom = document.getElementById('chinaMap');
+            if (!mapDom) return;
+            const myChart = echarts.init(mapDom);
+
+            // 地图数据
+            const mapData = ${JSON.stringify(mapDataArray)};
+
+            // 计算数据最大值以匹配颜色渐变区间
+            const maxVal = Math.max(...mapData.map(d => d.value), 10);
+
+            const option = {
+              tooltip: {
+                trigger: 'item',
+                formatter: function (params) {
+                  const val = params.value || 0;
+                  return '📍 <strong>' + params.name + '</strong><br/>今日访客量：<strong style="color:#0066ff;">' + val + '</strong> 次';
+                }
+              },
+              visualMap: {
+                min: 0,
+                max: maxVal,
+                left: 'left',
+                bottom: 'bottom',
+                text: ['高访问量', '低访问量'],
+                calculable: true,
+                inRange: {
+                  color: ['#e0f2fe', '#bae6fd', '#38bdf8', '#0284c7', '#1e3a8a']
+                }
+              },
+              series: [
+                {
+                  name: '访客量',
+                  type: 'map',
+                  map: 'china',
+                  roam: true,
+                  zoom: 1.2,
+                  label: {
+                    show: false,
+                    color: '#333'
+                  },
+                  itemStyle: {
+                    areaColor: '#f1f5f9',
+                    borderColor: '#cbd5e1'
+                  },
+                  emphasis: {
+                    label: {
+                      show: true,
+                      color: '#000'
+                    },
+                    itemStyle: {
+                      areaColor: '#fde047'
+                    }
+                  },
+                  data: mapData
+                }
+              ]
+            };
+
+            myChart.setOption(option);
+            window.addEventListener('resize', () => myChart.resize());
           })();
         </script>
       </body>
