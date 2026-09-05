@@ -1,8 +1,8 @@
 export async function onRequestGet(context) {
   const { request, env } = context;
 
-  // 后台访问密码
-  const SECRET_KEY = "123456"; 
+  // 后台访问密码（可修改）
+  const SECRET_KEY = "123456"; 
   const url = new URL(request.url);
 
   if (url.searchParams.get("key") !== SECRET_KEY) {
@@ -10,24 +10,35 @@ export async function onRequestGet(context) {
   }
 
   try {
+    // 自动兼容性初始化：确保数据表及必要字段全部存在
+    await env.DB.exec(`
+      CREATE TABLE IF NOT EXISTS visits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        domain TEXT NOT NULL,
+        city TEXT DEFAULT 'Unknown',
+        country TEXT DEFAULT 'Unknown',
+        visit_time DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     // 1. 查询全站总访问量
     const totalVisitsRes = await env.DB.prepare(`SELECT COUNT(*) as total FROM visits`).first();
     const totalVisits = totalVisitsRes?.total || 0;
 
     // 2. 查询域名排行榜（按总访问量倒序）
     const domainRankRes = await env.DB.prepare(`
-      SELECT domain, COUNT(*) as domain_total 
-      FROM visits 
-      GROUP BY domain 
+      SELECT domain, COUNT(*) as domain_total 
+      FROM visits 
+      GROUP BY domain 
       ORDER BY domain_total DESC
     `).all();
     const domainRank = domainRankRes?.results || [];
 
     // 3. 查询各域名下的国家和城市详细数据
     const detailsRes = await env.DB.prepare(`
-      SELECT domain, country, city, COUNT(*) as city_visits 
-      FROM visits 
-      GROUP BY domain, country, city 
+      SELECT domain, country, city, COUNT(*) as city_visits 
+      FROM visits 
+      GROUP BY domain, country, city 
       ORDER BY domain ASC, city_visits DESC
     `).all();
     const details = detailsRes?.results || [];
@@ -98,7 +109,7 @@ export async function onRequestGet(context) {
           .container { max-width: 1000px; margin: 0 auto; }
           .header { text-align: center; margin-bottom: 25px; }
           .header h1 { margin: 0; color: #1a1a1a; font-size: 26px; }
-          
+          
           /* 概览指标卡片 */
           .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 25px; }
           .stat-card { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); text-align: center; }
@@ -167,7 +178,11 @@ export async function onRequestGet(context) {
 
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
   } catch (error) {
-    return new Response("数据库建立成功但尚无数据，请先访问一次网站首页。" + error.message, { status: 200 });
+    // 精准捕获并直接输出具体错误原因，不再静默掩盖
+    return new Response(`后台读取数据库异常：${error.message}\n${error.stack}`, { 
+      status: 500,
+      headers: { "Content-Type": "text/plain; charset=utf-8" }
+    });
   }
 }
 
@@ -202,117 +217,76 @@ function translateCity(city) {
   if (!city || city === 'Unknown') return '未知城市';
 
   const cityMap = {
-    // 直辖市 / 特别行政区 / 台湾
     'Beijing': '北京', 'Shanghai': '上海', 'Tianjin': '天津', 'Chongqing': '重庆',
     'Hong Kong': '香港', 'Macau': '澳门', 'Taipei': '台北', 'Kaohsiung': '高雄',
-
-    // 广东
     'Guangzhou': '广州', 'Shenzhen': '深圳', 'Zhuhai': '珠海', 'Shantou': '汕头',
     'Foshan': '佛山', 'Shaoguan': '韶关', 'Zhanjiang': '湛江', 'Zhaoqing': '肇庆',
     'Jiangmen': '江门', 'Maoming': '茂名', 'Huizhou': '惠州', 'Meizhou': '梅州',
     'Shanwei': '汕尾', 'Heyuan': '河源', 'Yangjiang': '阳江', 'Qingyuan': '清远',
     'Dongguan': '东莞', 'Zhongshan': '中山', 'Chaozhou': '潮州', 'Jieyang': '揭阳', 'Yunfu': '云浮',
-
-    // 山西
     'Taiyuan': '太原', 'Datong': '大同', 'Yangquan': '阳泉', 'Changzhi': '长治',
     'Jincheng': '晋城', 'Shuozhou': '朔州', 'Jinzhong': '晋中', 'Yuncheng': '运城',
     'Xinzhou': '忻州', 'Linfen': '临汾', 'Luliang': '吕梁',
-
-    // 山东
     'Jinan': '济南', 'Qingdao': '青岛', 'Zibo': '淄博', 'Zaozhuang': '枣庄',
     'Dongying': '东营', 'Yantai': '烟台', 'Weifang': '潍坊', 'Jining': '济宁',
     'Taian': '泰安', 'Weihai': '威海', 'Rizhao': '日照', 'Linyi': '临沂',
     'Dezhou': '德州', 'Liaocheng': '聊城', 'Binzhou': '滨州', 'Heze': '菏泽',
-
-    // 浙江
     'Hangzhou': '杭州', 'Ningbo': '宁波', 'Wenzhou': '温州', 'Jiaxing': '嘉兴',
     'Huzhou': '湖州', 'Shaoxing': '绍兴', 'Jinhua': '金华', 'Quzhou': '衢州',
     'Zhoushan': '舟山', 'Taizhou': '台州', 'Lishui': '丽水',
-
-    // 江苏
     'Nanjing': '南京', 'Wuxi': '无锡', 'Xuzhou': '徐州', 'Changzhou': '常州',
     'Suzhou': '苏州', 'Nantong': '南通', 'Lianyungang': '连云港', 'Huai\'an': '淮安',
     'Huaian': '淮安', 'Yancheng': '盐城', 'Yangzhou': '扬州', 'Zhenjiang': '镇江',
     'Taizhou_JS': '泰州', 'Suqian': '宿迁',
-
-    // 河南
     'Zhengzhou': '郑州', 'Kaifeng': '开封', 'Luoyang': '洛阳', 'Pingdingshan': '平顶山',
     'Anyang': '安阳', 'Hebi': '鹤壁', 'Xinxiang': '新乡', 'Jiaozuo': '焦作',
     'Puyang': '濮阳', 'Xuchang': '许昌', 'Luohe': '漯河', 'Sanmenxia': '三门峡',
     'Nanyang': '南阳', 'Shangqiu': '商丘', 'Xinyang': '信阳', 'Zhoukou': '周口',
     'Zhumadian': '驻马店', 'Jiyuan': '济源',
-
-    // 湖北
     'Wuhan': '武汉', 'Huangshi': '黄石', 'Shiyan': '十堰', 'Yichang': '宜昌',
     'Xiangyang': '襄阳', 'Ezhou': '鄂州', 'Jingmen': '荆门', 'Xiaogan': '孝感',
     'Jingzhou': '荆州', 'Huanggang': '黄冈', 'Xianning': '咸宁', 'Suizhou': '随州',
     'Enshi': '恩施', 'Xiantao': '仙桃', 'Tianmen': '天门', 'Qianjiang': '潜江',
-
-    // 湖南
     'Changsha': '长沙', 'Zhuzhou': '株洲', 'Xiangtan': '湘潭', 'Hengyang': '衡阳',
     'Shaoyang': '邵阳', 'Yueyang': '岳阳', 'Changde': '常德', 'Zhangjiajie': '张家界',
     'Yiyang': '益阳', 'Chenzhou': '郴州', 'Yongzhou': '永州', 'Huaihua': '怀化',
     'Loudi': '娄底', 'Xiangxi': '湘西',
-
-    // 四川
     'Chengdu': '成都', 'Zigong': '自贡', 'Panzhihua': '攀枝花', 'Luzhou': '泸州',
     'Deyang': '德阳', 'Mianyang': '绵阳', 'Guangyuan': '广元', 'Suining': '遂宁',
     'Neijiang': '内江', 'Leshan': '乐山', 'Nanchong': '南充', 'Meishan': '眉山',
     'Yibin': '宜宾', 'Guang\'an': '广安', 'Guangan': '广安', 'Dazhou': '达州',
     'Ya\'an': '雅安', 'Yaan': '雅安', 'Bazhong': '巴中', 'Ziyang': '资阳',
     'Aba': '阿坝', 'Ganzi': '甘孜', 'Liangshan': '凉山',
-
-    // 福建
     'Fuzhou': '福州', 'Xiamen': '厦门', 'Putian': '莆田', 'Sanming': '三明',
     'Quanzhou': '泉州', 'Zhangzhou': '漳州', 'Nanping': '南平', 'Longyan': '龙岩', 'Ningde': '宁德',
-
-    // 安徽
     'Hefei': '合肥', 'Wuhu': '芜湖', 'Bengbu': '蚌埠', 'Huainan': '淮南',
     'Ma\'anshan': '马鞍山', 'Maanshan': '马鞍山', 'Huaibei': '淮北', 'Tongling': '铜陵',
     'Anqing': '安庆', 'Huangshan': '黄山', 'Chuzhou': '滁州', 'Fuyang': '阜阳',
     'Suzhou_AH': '宿州', 'Lu\'an': '六安', 'Luan': '六安', 'Bozhou': '亳州',
     'Chizhou': '池州', 'Xuancheng': '宣城',
-
-    // 河北
     'Shijiazhuang': '石家庄', 'Tangshan': '唐山', 'Qinhuangdao': '秦皇岛', 'Handan': '邯郸',
     'Xingtai': '邢台', 'Baoding': '保定', 'Zhangjiakou': '张家口', 'Chengde': '承德',
     'Cangzhou': '沧州', 'Langfang': '廊坊', 'Hengshui': '衡水',
-
-    // 辽宁
     'Shenyang': '沈阳', 'Dalian': '大连', 'Anshan': '鞍山', 'Fushun': '抚顺',
     'Benxi': '本溪', 'Dandong': '丹东', 'Jinzhou': '锦州', 'Yingkou': '营口',
     'Fuxin': '阜新', 'Liaoyang': '辽阳', 'Panjin': '盘锦', 'Tieling': '铁岭',
     'Chaoyang': '朝阳', 'Huludao': '葫芦岛',
-
-    // 吉林
     'Changchun': '长春', 'Jilin': '吉林', 'Siping': '四平', 'Liaoyuan': '辽源',
     'Tonghua': '通化', 'Baishan': '白山', 'Songyuan': '松原', 'Baicheng': '白城', 'Yanbian': '延边',
-
-    // 黑龙江
     'Harbin': '哈尔滨', 'Qiqihar': '齐齐哈尔', 'Jixi': '鸡西', 'Hegang': '鹤岗',
     'Shuangyashan': '双鸭山', 'Daqing': '大庆', 'Yichun': '伊春', 'Jiamusi': '佳木斯',
     'Qitaihe': '七台河', 'Mudanjiang': '牡丹江', 'Heihe': '黑河', 'Suihua': '绥化', 'Daxinganling': '大兴安岭',
-
-    // 江西
     'Nanchang': '南昌', 'Jingdezhen': '景德镇', 'Pingxiang': '萍乡', 'Jiujiang': '九江',
     'Xinyu': '新余', 'Yingtan': '鹰潭', 'Ganzhou': '赣州', 'Ji\'an': '吉安', 'Jian': '吉安',
     'Yichun_JX': '宜春', 'Fuzhou_JX': '抚州', 'Shangrao': '上饶',
-
-    // 陕西
     'Xi\'an': '西安', 'Xian': '西安', 'Tongchuan': '铜川', 'Baoji': '宝鸡',
     'Xianyang': '咸阳', 'Weinan': '渭南', 'Yan\'an': '延安', 'Yanan': '延安',
     'Hanzhong': '汉中', 'Yulin': '榆林', 'Ankang': '安康', 'Shangluo': '商洛',
-
-    // 甘肃 / 青海 / 宁夏 / 新疆 / 西藏
     'Lanzhou': '兰州', 'Xining': '西宁', 'Yinchuan': '银川', 'Urumqi': '乌鲁木齐',
     'Lhasa': '拉萨', 'Kashgar': '喀什', 'Korla': '库尔勒', 'Ili': '伊犁',
-
-    // 广西
     'Nanning': '南宁', 'Liuzhou': '柳州', 'Guilin': '桂林', 'Wuzhou': '梧州',
     'Beihai': '北海', 'Fangchenggang': '防城港', 'Qinzhou': '钦州', 'Guigang': '贵港',
     'Yulin_GX': '玉林', 'Baise': '百色', 'Hechi': '河池', 'Hezhou': '贺州', 'Chongzuo': '崇左',
-
-    // 云南 / 贵州 / 海南
     'Kunming': '昆明', 'Guiyang': '贵阳', 'Haikou': '海口', 'Sanya': '三亚',
     'Zunyi': '遵义', 'Dali': '大理', 'Lijiang': '丽江', 'Xishuangbanna': '西双版纳'
   };
