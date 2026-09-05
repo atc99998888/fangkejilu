@@ -10,14 +10,47 @@ export async function onRequestGet(context) {
   }
 
   try {
-    // 自动全新初始化数据表（单行 SQL）
+    // 自动初始化数据表（单行 SQL）
     await env.DB.exec("CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL, ip TEXT DEFAULT 'Unknown', city TEXT DEFAULT 'Unknown', country TEXT DEFAULT 'Unknown', visit_time DATETIME DEFAULT CURRENT_TIMESTAMP);");
 
-    // 1. 查询全站总访问量
-    const totalVisitsRes = await env.DB.prepare(`SELECT COUNT(*) as total FROM visits`).first();
-    const totalVisits = totalVisitsRes?.total || 0;
+    // 1. 获取今日与昨日访问量 (基于北京时间 UTC+8)
+    const todayRes = await env.DB.prepare(`
+      SELECT COUNT(*) as count FROM visits 
+      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
+    `).first();
+    const todayVisits = todayRes?.count || 0;
 
-    // 2. 查询域名排行榜
+    const yesterdayRes = await env.DB.prepare(`
+      SELECT COUNT(*) as count FROM visits 
+      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
+    `).first();
+    const yesterdayVisits = yesterdayRes?.count || 0;
+
+    // 2. 获取最近 7 天每日访问量 (含日期与数量)
+    const last7DaysRes = await env.DB.prepare(`
+      SELECT DATE(DATETIME(visit_time, '+8 hours')) as date, COUNT(*) as count 
+      FROM visits 
+      WHERE DATE(DATETIME(visit_time, '+8 hours')) >= DATE(DATETIME('now', '+8 hours', '-6 days'))
+      GROUP BY DATE(DATETIME(visit_time, '+8 hours'))
+      ORDER BY date ASC
+    `).all();
+
+    // 补全最近 7 天日期数据（防止某天无访问导致断档）
+    const last7DaysData = [];
+    const dbDaysMap = {};
+    (last7DaysRes?.results || []).forEach(row => { dbDaysMap[row.date] = row.count; });
+
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(Date.now() + 8 * 3600 * 1000 - i * 24 * 3600 * 1000);
+      const dateStr = d.toISOString().split('T')[0];
+      last7DaysData.push({
+        date: dateStr,
+        displayDate: dateStr.slice(5), // 显示 MM-DD
+        count: dbDaysMap[dateStr] || 0
+      });
+    }
+
+    // 3. 查询域名排行榜
     const domainRankRes = await env.DB.prepare(`
       SELECT domain, COUNT(*) as domain_total 
       FROM visits 
@@ -26,7 +59,7 @@ export async function onRequestGet(context) {
     `).all();
     const domainRank = domainRankRes?.results || [];
 
-    // 3. 查询城市排行榜
+    // 4. 查询城市排行榜
     const cityRankRes = await env.DB.prepare(`
       SELECT country, city, COUNT(*) as city_total 
       FROM visits 
@@ -36,7 +69,7 @@ export async function onRequestGet(context) {
     `).all();
     const cityRank = cityRankRes?.results || [];
 
-    // 4. 查询各域名下的详细访问记录
+    // 5. 查询各域名下的详细访问记录
     const detailsRes = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
       FROM visits 
@@ -124,13 +157,17 @@ export async function onRequestGet(context) {
           .header { text-align: center; margin-bottom: 20px; }
           .header h1 { margin: 0; color: #1a1a1a; font-size: 22px; }
           
-          .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+          .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
           .stat-card { background: #fff; padding: 12px 16px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); text-align: center; }
           .stat-card .num { font-size: 20px; font-weight: bold; color: #0066ff; margin-top: 2px; }
           .stat-card .label { font-size: 12px; color: #666; }
 
           .panel { background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); margin-bottom: 20px; }
           .panel-title { font-size: 16px; margin-top: 0; margin-bottom: 12px; border-bottom: 1px solid #f0f2f5; padding-bottom: 8px; color: #2c3e50; }
+
+          /* K线图/折线图容器 */
+          .chart-container { position: relative; width: 100%; height: 220px; margin-top: 10px; }
+          canvas { width: 100%!important; height: 100%!important; }
 
           table { width: 100%; border-collapse: collapse; margin-top: 8px; }
           th, td { border: 1px solid #eef0f3; padding: 10px; text-align: left; font-size: 13px; }
@@ -160,14 +197,23 @@ export async function onRequestGet(context) {
             <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
-          <!-- 1. 概览 -->
+          <!-- 1. 概览：改为今日访问、昨日访问 -->
           <div class="stats-grid">
-            <div class="stat-card"><div class="label">全站总访问量 (PV)</div><div class="num">${totalVisits}</div></div>
+            <div class="stat-card"><div class="label">今日访问量</div><div class="num">${todayVisits}</div></div>
+            <div class="stat-card"><div class="label">昨日访问量</div><div class="num">${yesterdayVisits}</div></div>
             <div class="stat-card"><div class="label">已被访问域名数</div><div class="num">${totalDomains}</div></div>
             <div class="stat-card"><div class="label">覆盖城市数</div><div class="num">${uniqueCities}</div></div>
           </div>
 
-          <!-- 2. 域名排行榜 -->
+          <!-- 2. 最近 7 天访问趋势图 -->
+          <div class="panel">
+            <h2 class="panel-title">📈 最近 7 天访问趋势图</h2>
+            <div class="chart-container">
+              <canvas id="trendChart"></canvas>
+            </div>
+          </div>
+
+          <!-- 3. 域名排行榜 -->
           <div class="panel">
             <h2 class="panel-title">🏆 域名流量排行榜</h2>
             <table>
@@ -180,7 +226,7 @@ export async function onRequestGet(context) {
             </table>
           </div>
 
-          <!-- 3. 城市排行榜 -->
+          <!-- 4. 城市排行榜 -->
           <div class="panel">
             <h2 class="panel-title">🏙️ 热门访问城市排行榜 (Top 15)</h2>
             <table>
@@ -193,7 +239,7 @@ export async function onRequestGet(context) {
             </table>
           </div>
 
-          <!-- 4. 各域名详细访客记录（点开折叠） -->
+          <!-- 5. 各域名详细访客记录（点开折叠） -->
           <h2 style="color: #2c3e50; font-size: 16px; margin-bottom: 12px;">📍 各域名明细记录 (点击展开)</h2>
           ${domainCardsHtml || '<div class="panel" style="text-align:center; padding:20px; color:#888;">暂无数据</div>'}
 
@@ -211,6 +257,93 @@ export async function onRequestGet(context) {
               icon.innerText = '▼';
             }
           }
+
+          // 原生 Canvas 渲染 7 天 K线/趋势折线图
+          (function drawChart() {
+            const chartData = ${JSON.stringify(last7DaysData)};
+            const canvas = document.getElementById('trendChart');
+            if (!canvas) return;
+
+            const ctx = canvas.getContext('2d');
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+
+            const width = rect.width;
+            const height = rect.height;
+            const padding = { top: 35, bottom: 35, left: 25, right: 25 };
+
+            const counts = chartData.map(d => d.count);
+            const maxVal = Math.max(...counts, 5); // 最少留 5 的高度区间
+
+            const stepX = (width - padding.left - padding.right) / (chartData.length - 1);
+            const points = chartData.map((item, index) => {
+              const x = padding.left + index * stepX;
+              const y = height - padding.bottom - ((item.count / maxVal) * (height - padding.top - padding.bottom));
+              return { x, y, count: item.count, displayDate: item.displayDate };
+            });
+
+            // 背景虚线网格
+            ctx.strokeStyle = '#f0f0f0';
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            for (let i = 0; i <= 3; i++) {
+              const y = padding.top + (i * (height - padding.top - padding.bottom) / 3);
+              ctx.moveTo(padding.left, y);
+              ctx.lineTo(width - padding.right, y);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 渐变填充区域
+            const gradient = ctx.createLinearGradient(0, padding.top, 0, height - padding.bottom);
+            gradient.addColorStop(0, 'rgba(0, 102, 255, 0.25)');
+            gradient.addColorStop(1, 'rgba(0, 102, 255, 0.00)');
+
+            ctx.beginPath();
+            ctx.moveTo(points[0].x, height - padding.bottom);
+            points.forEach(p => ctx.lineTo(p.x, p.y));
+            ctx.lineTo(points[points.length - 1].x, height - padding.bottom);
+            ctx.closePath();
+            ctx.fillStyle = gradient;
+            ctx.fill();
+
+            // 绘制主折线
+            ctx.beginPath();
+            ctx.strokeStyle = '#0066ff';
+            ctx.lineWidth = 2.5;
+            points.forEach((p, i) => {
+              if (i === 0) ctx.moveTo(p.x, p.y);
+              else ctx.lineTo(p.x, p.y);
+            });
+            ctx.stroke();
+
+            // 绘制数据圆点、日期和顶部数量标签
+            points.forEach(p => {
+              // 圆点外圈
+              ctx.beginPath();
+              ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+              ctx.fillStyle = '#ffffff';
+              ctx.fill();
+              ctx.strokeStyle = '#0066ff';
+              ctx.lineWidth = 2;
+              ctx.stroke();
+
+              // 顶部数值标签（显示每天具体数量）
+              ctx.fillStyle = '#0066ff';
+              ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto';
+              ctx.textAlign = 'center';
+              ctx.fillText(p.count + '次', p.x, p.y - 10);
+
+              // 底部日期标签
+              ctx.fillStyle = '#666666';
+              ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto';
+              ctx.fillText(p.displayDate, p.x, height - 10);
+            });
+          })();
         </script>
       </body>
       </html>
@@ -357,7 +490,7 @@ function translateCity(city) {
     'Cangzhou': '沧州', 'Langfang': '廊坊', 'Hengshui': '衡水',
     'Shenyang': '沈阳', 'Dalian': '大连', 'Anshan': '鞍山', 'Fushun': '抚顺',
     'Benxi': '本溪', 'Dandong': '丹东', 'Jinzhou': '锦州', 'Yingkou': '营口',
-    'Fuxin': '阜新', 'Liaoyang': '辽阳', 'Panjin': '盘jin', 'Tieling': '铁岭',
+    'Fuxin': '阜新', 'Liaoyang': '辽阳', 'Panjin': '盘锦', 'Tieling': '铁岭',
     'Chaoyang': '朝阳', 'Huludao': '葫芦岛',
     'Changchun': '长春', 'Jilin': '吉林', 'Siping': '四平', 'Liaoyuan': '辽源',
     'Tonghua': '通化', 'Baishan': '白山', 'Songyuan': '松原', 'Baicheng': '白城', 'Yanbian': '延边',
