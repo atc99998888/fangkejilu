@@ -2,7 +2,7 @@ export async function onRequestGet(context) {
   const { request, env } = context;
 
   // 后台访问密码
-  const SECRET_KEY = "123456"; 
+  const SECRET_KEY = "daily127"; 
   const url = new URL(request.url);
 
   if (url.searchParams.get("key") !== SECRET_KEY) {
