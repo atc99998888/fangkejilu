@@ -36,7 +36,7 @@ export async function onRequestGet(context) {
     `).all();
     const cityRank = cityRankRes?.results || [];
 
-    // 4. 查询各域名下的详细访问记录（包含时间、IP、国家、城市）
+    // 4. 查询各域名下的详细访问记录
     const detailsRes = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
       FROM visits 
@@ -55,11 +55,11 @@ export async function onRequestGet(context) {
       groupedDetails[item.domain].push(item);
     });
 
-    // 域名排行榜 HTML（通过 decodeDomain 处理中文域名）
+    // 域名排行榜 HTML
     let domainRankHtml = domainRank.map((item, index) => `
       <tr>
         <td style="text-align: center;"><span class="rank-badge rank-${index + 1}">${index + 1}</span></td>
-        <td><strong class="domain-name" data-domain="${escapeHtml(item.domain)}">${escapeHtml(decodeDomain(item.domain))}</strong></td>
+        <td><strong>${escapeHtml(punycodeToUnicode(item.domain))}</strong></td>
         <td><span class="pv-count">${item.domain_total} 次</span></td>
       </tr>
     `).join('');
@@ -77,7 +77,7 @@ export async function onRequestGet(context) {
     // 各域名明细卡片 HTML（支持点击展开/折叠）
     let domainCardsHtml = domainRank.map((item, index) => {
       const domain = item.domain;
-      const decodedDomainName = decodeDomain(domain);
+      const decodedDomainName = punycodeToUnicode(domain);
       const list = groupedDetails[domain] || [];
       const rows = list.map(row => `
         <tr>
@@ -91,7 +91,7 @@ export async function onRequestGet(context) {
       return `
         <div class="domain-card">
           <div class="domain-header" onclick="toggleCard(${index})">
-            <h3>🌐 访问域名：<span class="domain-name" data-domain="${escapeHtml(domain)}">${escapeHtml(decodedDomainName)}</span> <span class="toggle-icon" id="icon-${index}">▼</span></h3>
+            <h3>🌐 访问域名：<span>${escapeHtml(decodedDomainName)}</span> <span class="toggle-icon" id="icon-${index}">▼</span></h3>
             <span class="domain-total-badge">该域名总访客：${item.domain_total} 次</span>
           </div>
           <div class="domain-content" id="content-${index}" style="display: none;">
@@ -211,19 +211,6 @@ export async function onRequestGet(context) {
               icon.innerText = '▼';
             }
           }
-
-          // 浏览器客户端深度渲染还原中文域名
-          document.addEventListener("DOMContentLoaded", function() {
-            document.querySelectorAll('.domain-name').forEach(el => {
-              const rawDomain = el.getAttribute('data-domain');
-              if (rawDomain && rawDomain.includes('xn--')) {
-                try {
-                  const url = new URL('http://' + rawDomain);
-                  el.innerText = url.hostname;
-                } catch(e) {}
-              }
-            });
-          });
         </script>
       </body>
       </html>
@@ -238,16 +225,56 @@ export async function onRequestGet(context) {
   }
 }
 
-// 解码中文域名 (Punycode 还原)
-function decodeDomain(domain) {
-  if (!domain) return '';
-  if (!domain.includes('xn--')) return domain;
-  try {
-    const parsed = new URL('http://' + domain);
-    return parsed.hostname;
-  } catch (e) {
-    return domain;
+// 轻量原生 Punycode 解码算法实现
+function decodePunycodePart(input) {
+  const BASE = 36, TMIN = 1, TMAX = 26, SKEW = 38, DAMP = 700, INITIAL_BIAS = 72, INITIAL_N = 128;
+  function adapt(delta, numPoints, firstTime) {
+    delta = firstTime ? Math.floor(delta / DAMP) : delta >> 1;
+    delta += Math.floor(delta / numPoints);
+    let k = 0;
+    while (delta > ((BASE - TMIN) * TMAX) / 2) {
+      delta = Math.floor(delta / (BASE - TMIN));
+      k += BASE;
+    }
+    return Math.floor(k + ((BASE - TMIN + 1) * delta) / (delta + SKEW));
   }
+
+  let output = [];
+  let basicIdx = input.lastIndexOf('-');
+  if (basicIdx > 0) {
+    for (let j = 0; j < basicIdx; ++j) {
+      output.push(input.charCodeAt(j));
+    }
+    input = input.slice(basicIdx + 1);
+  }
+
+  let n = INITIAL_N, i = 0, bias = INITIAL_BIAS;
+  let inIdx = 0;
+  while (inIdx < input.length) {
+    let oldI = i, w = 1, k = BASE;
+    while (true) {
+      if (inIdx >= input.length) return input;
+      let code = input.charCodeAt(inIdx++);
+      let digit = code - 48 < 10 ? code - 22 : code - 65 < 26 ? code - 65 : code - 97 < 26 ? code - 97 : BASE;
+      i += digit * w;
+      let t = k <= bias ? TMIN : k >= bias + TMAX ? TMAX : k - bias;
+      if (digit < t) break;
+      w *= BASE - t;
+      k += BASE;
+    }
+    bias = adapt(i - oldI, output.length + 1, oldI === 0);
+    n += Math.floor(i / (output.length + 1));
+    i %= output.length + 1;
+    output.splice(i++, 0, n);
+  }
+  return String.fromCodePoint(...output);
+}
+
+function punycodeToUnicode(domain) {
+  if (!domain) return '';
+  return domain.split('.').map(part => {
+    return part.startsWith('xn--') ? decodePunycodePart(part.slice(4)) : part;
+  }).join('.');
 }
 
 function escapeHtml(str) {
@@ -330,7 +357,7 @@ function translateCity(city) {
     'Cangzhou': '沧州', 'Langfang': '廊坊', 'Hengshui': '衡水',
     'Shenyang': '沈阳', 'Dalian': '大连', 'Anshan': '鞍山', 'Fushun': '抚顺',
     'Benxi': '本溪', 'Dandong': '丹东', 'Jinzhou': '锦州', 'Yingkou': '营口',
-    'Fuxin': '阜新', 'Liaoyang': '辽阳', 'Panjin': '盘锦', 'Tieling': '铁岭',
+    'Fuxin': '阜新', 'Liaoyang': '辽阳', 'Panjin': '盘jin', 'Tieling': '铁岭',
     'Chaoyang': '朝阳', 'Huludao': '葫芦岛',
     'Changchun': '长春', 'Jilin': '吉林', 'Siping': '四平', 'Liaoyuan': '辽源',
     'Tonghua': '通化', 'Baishan': '白山', 'Songyuan': '松原', 'Baicheng': '白城', 'Yanbian': '延边',
