@@ -55,11 +55,11 @@ export async function onRequestGet(context) {
       groupedDetails[item.domain].push(item);
     });
 
-    // 域名排行榜 HTML
+    // 域名排行榜 HTML（通过 decodeDomain 处理中文域名）
     let domainRankHtml = domainRank.map((item, index) => `
       <tr>
         <td style="text-align: center;"><span class="rank-badge rank-${index + 1}">${index + 1}</span></td>
-        <td><strong>${escapeHtml(item.domain)}</strong></td>
+        <td><strong class="domain-name" data-domain="${escapeHtml(item.domain)}">${escapeHtml(decodeDomain(item.domain))}</strong></td>
         <td><span class="pv-count">${item.domain_total} 次</span></td>
       </tr>
     `).join('');
@@ -77,6 +77,7 @@ export async function onRequestGet(context) {
     // 各域名明细卡片 HTML（支持点击展开/折叠）
     let domainCardsHtml = domainRank.map((item, index) => {
       const domain = item.domain;
+      const decodedDomainName = decodeDomain(domain);
       const list = groupedDetails[domain] || [];
       const rows = list.map(row => `
         <tr>
@@ -90,7 +91,7 @@ export async function onRequestGet(context) {
       return `
         <div class="domain-card">
           <div class="domain-header" onclick="toggleCard(${index})">
-            <h3>🌐 访问域名：<span>${escapeHtml(domain)}</span> <span class="toggle-icon" id="icon-${index}">▼</span></h3>
+            <h3>🌐 访问域名：<span class="domain-name" data-domain="${escapeHtml(domain)}">${escapeHtml(decodedDomainName)}</span> <span class="toggle-icon" id="icon-${index}">▼</span></h3>
             <span class="domain-total-badge">该域名总访客：${item.domain_total} 次</span>
           </div>
           <div class="domain-content" id="content-${index}" style="display: none;">
@@ -123,7 +124,6 @@ export async function onRequestGet(context) {
           .header { text-align: center; margin-bottom: 20px; }
           .header h1 { margin: 0; color: #1a1a1a; font-size: 22px; }
           
-          /* 优化：调小、规范顶部概览数据卡片 */
           .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
           .stat-card { background: #fff; padding: 12px 16px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); text-align: center; }
           .stat-card .num { font-size: 20px; font-weight: bold; color: #0066ff; margin-top: 2px; }
@@ -145,7 +145,6 @@ export async function onRequestGet(context) {
           .rank-3 { background: #cd7f32; color: #fff; }
           .pv-count { color: #27ae60; font-weight: bold; }
 
-          /* 折叠面板样式 */
           .domain-card { background: #fff; border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
           .domain-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
           .domain-header h3 { margin: 0; font-size: 15px; color: #333; display: flex; align-items: center; gap: 8px; }
@@ -161,7 +160,7 @@ export async function onRequestGet(context) {
             <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
-          <!-- 1. 规范化顶栏概览 -->
+          <!-- 1. 概览 -->
           <div class="stats-grid">
             <div class="stat-card"><div class="label">全站总访问量 (PV)</div><div class="num">${totalVisits}</div></div>
             <div class="stat-card"><div class="label">已被访问域名数</div><div class="num">${totalDomains}</div></div>
@@ -212,6 +211,19 @@ export async function onRequestGet(context) {
               icon.innerText = '▼';
             }
           }
+
+          // 浏览器客户端深度渲染还原中文域名
+          document.addEventListener("DOMContentLoaded", function() {
+            document.querySelectorAll('.domain-name').forEach(el => {
+              const rawDomain = el.getAttribute('data-domain');
+              if (rawDomain && rawDomain.includes('xn--')) {
+                try {
+                  const url = new URL('http://' + rawDomain);
+                  el.innerText = url.hostname;
+                } catch(e) {}
+              }
+            });
+          });
         </script>
       </body>
       </html>
@@ -223,6 +235,18 @@ export async function onRequestGet(context) {
       status: 500,
       headers: { "Content-Type": "text/plain; charset=utf-8" }
     });
+  }
+}
+
+// 解码中文域名 (Punycode 还原)
+function decodeDomain(domain) {
+  if (!domain) return '';
+  if (!domain.includes('xn--')) return domain;
+  try {
+    const parsed = new URL('http://' + domain);
+    return parsed.hostname;
+  } catch (e) {
+    return domain;
   }
 }
 
