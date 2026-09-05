@@ -92,16 +92,7 @@ export async function onRequestGet(context) {
     `).all();
     const cityRank = cityRankRes?.results || [];
 
-    // 构建按域名归类的今日明细 HTML
-    const groupedDetails = {};
-    todayDetails.forEach(item => {
-      if (!groupedDetails[item.domain]) {
-        groupedDetails[item.domain] = [];
-      }
-      groupedDetails[item.domain].push(item);
-    });
-
-    // 渲染通用明细表格的函数
+    // 渲染通用顶部卡片明细表格
     const renderTableRows = (list) => {
       if (!list || list.length === 0) {
         return '<tr><td colspan="5" style="text-align:center; color:#999;">暂无访问记录</td></tr>';
@@ -120,31 +111,26 @@ export async function onRequestGet(context) {
     const todayTableRowsHtml = renderTableRows(todayDetails);
     const yesterdayTableRowsHtml = renderTableRows(yesterdayDetails);
 
-    // 域名排行榜 HTML
-    let domainRankHtml = domainRank.map((item, index) => `
-      <tr>
-        <td style="text-align: center;"><span class="rank-badge rank-${index + 1}">${index + 1}</span></td>
-        <td><strong>${escapeHtml(punycodeToUnicode(item.domain))}</strong></td>
-        <td><span class="pv-count">${item.domain_total} 次</span></td>
-      </tr>
-    `).join('');
+    // 构建【按域名归类】和【按城市归类】的数据映射，方便嵌入排行榜展开层
+    const domainDetailsMap = {};
+    const cityDetailsMap = {};
 
-    // 城市排行榜 HTML
-    let cityRankHtml = cityRank.map((item, index) => `
-      <tr>
-        <td style="text-align: center;"><span class="rank-badge rank-${index + 1}">${index + 1}</span></td>
-        <td>${translateCountry(item.country)}</td>
-        <td><strong>${translateCity(item.city)}</strong></td>
-        <td><span class="pv-count">${item.city_total} 次</span></td>
-      </tr>
-    `).join('');
+    todayDetails.forEach(item => {
+      // 域名归类
+      if (!domainDetailsMap[item.domain]) domainDetailsMap[item.domain] = [];
+      domainDetailsMap[item.domain].push(item);
 
-    // 各域名卡片 HTML
-    let domainCardsHtml = domainRank.map((item, index) => {
+      // 城市归类 (唯一 Key: 国家_城市)
+      const cityKey = `${item.country}_${item.city}`;
+      if (!cityDetailsMap[cityKey]) cityDetailsMap[cityKey] = [];
+      cityDetailsMap[cityKey].push(item);
+    });
+
+    // 1. 生成可展开的域名排行榜 HTML
+    let domainRankHtml = domainRank.map((item, index) => {
       const domain = item.domain;
-      const decodedDomainName = punycodeToUnicode(domain);
-      const list = groupedDetails[domain] || [];
-      const rows = list.map(row => `
+      const list = domainDetailsMap[domain] || [];
+      const innerRows = list.map(row => `
         <tr>
           <td><code>${formatDate(row.visit_time)}</code></td>
           <td><code>${escapeHtml(row.ip || 'Unknown')}</code></td>
@@ -154,24 +140,63 @@ export async function onRequestGet(context) {
       `).join('');
 
       return `
-        <div class="domain-card">
-          <div class="domain-header" onclick="toggleElement('content-${index}', 'icon-${index}')">
-            <h3>🌐 访问域名：<span>${escapeHtml(decodedDomainName)}</span> <span class="toggle-icon" id="icon-${index}">▼</span></h3>
-            <span class="domain-total-badge">今日访客：${item.domain_total} 次</span>
-          </div>
-          <div class="domain-content" id="content-${index}" style="display: none;">
-            <div style="overflow-x: auto;">
+        <tr class="clickable-row" onclick="toggleElement('domain-detail-${index}', 'domain-icon-${index}')">
+          <td style="text-align: center;"><span class="rank-badge rank-${index + 1}">${index + 1}</span></td>
+          <td><strong>${escapeHtml(punycodeToUnicode(domain))}</strong> <span class="arrow-icon" id="domain-icon-${index}">▼</span></td>
+          <td><span class="pv-count">${item.domain_total} 次</span></td>
+        </tr>
+        <tr id="domain-detail-${index}" class="detail-row" style="display: none;">
+          <td colspan="3" class="detail-cell">
+            <div class="inner-table-wrapper">
+              <div class="inner-title">🌐 域名 <strong>${escapeHtml(punycodeToUnicode(domain))}</strong> 今日访问明细：</div>
               <table>
                 <thead>
                   <tr><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
                 </thead>
                 <tbody>
-                  ${rows || '<tr><td colspan="4" style="text-align:center;">今日暂无明细数据</td></tr>'}
+                  ${innerRows || '<tr><td colspan="4" style="text-align:center;">暂无明细记录</td></tr>'}
                 </tbody>
               </table>
             </div>
-          </div>
-        </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    // 2. 生成可展开的城市排行榜 HTML
+    let cityRankHtml = cityRank.map((item, index) => {
+      const cityKey = `${item.country}_${item.city}`;
+      const list = cityDetailsMap[cityKey] || [];
+      const innerRows = list.map(row => `
+        <tr>
+          <td><code>${formatDate(row.visit_time)}</code></td>
+          <td><strong style="color:#0066ff;">${escapeHtml(punycodeToUnicode(row.domain))}</strong></td>
+          <td><code>${escapeHtml(row.ip || 'Unknown')}</code></td>
+        </tr>
+      `).join('');
+
+      return `
+        <tr class="clickable-row" onclick="toggleElement('city-detail-${index}', 'city-icon-${index}')">
+          <td style="text-align: center;"><span class="rank-badge rank-${index + 1}">${index + 1}</span></td>
+          <td>${translateCountry(item.country)}</td>
+          <td><strong>${translateCity(item.city)}</strong> <span class="arrow-icon" id="city-icon-${index}">▼</span></td>
+          <td><span class="pv-count">${item.city_total} 次</span></td>
+        </tr>
+        <tr id="city-detail-${index}" class="detail-row" style="display: none;">
+          <td colspan="4" class="detail-cell">
+            <div class="inner-table-wrapper">
+              <div class="inner-title">🏙️ 城市 <strong>${translateCity(item.city)}</strong> 今日来源域名与时间明细：</div>
+              <table>
+                <thead>
+                  <tr><th>访问时间 (北京时间)</th><th>被访问域名</th><th>访客 IP</th></tr>
+                </thead>
+                <tbody>
+                  ${innerRows || '<tr><td colspan="3" style="text-align:center;">暂无明细记录</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
       `;
     }).join('');
 
@@ -203,10 +228,21 @@ export async function onRequestGet(context) {
           .chart-container { position: relative; width: 100%; height: 220px; margin-top: 10px; }
           canvas { width: 100%!important; height: 100%!important; }
 
-          table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 4px; }
           th, td { border: 1px solid #eef0f3; padding: 10px; text-align: left; font-size: 13px; }
           th { background-color: #f8f9fa; color: #555; }
-          tr:nth-child(even) { background-color: #fafbfc; }
+
+          /* 可点击行样式 */
+          tr.clickable-row { cursor: pointer; transition: background-color 0.15s ease; }
+          tr.clickable-row:hover { background-color: #f0f7ff!important; }
+          .arrow-icon { font-size: 10px; color: #888; margin-left: 6px; display: inline-block; transition: transform 0.2s ease; }
+
+          /* 嵌套明细表格 */
+          .detail-cell { padding: 0!important; background-color: #fcfdfe!important; }
+          .inner-table-wrapper { padding: 12px 16px; background: #f4f8fb; border-bottom: 2px solid #e1e9f0; }
+          .inner-title { font-size: 12px; color: #444; margin-bottom: 8px; font-weight: 500; }
+          .inner-table-wrapper table { background: #fff; }
+          .inner-table-wrapper th { background-color: #eaf2f9; }
 
           code { background: #f1f3f5; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #d63384; }
 
@@ -215,14 +251,6 @@ export async function onRequestGet(context) {
           .rank-2 { background: #c0c0c0; color: #fff; }
           .rank-3 { background: #cd7f32; color: #fff; }
           .pv-count { color: #27ae60; font-weight: bold; }
-
-          .domain-card { background: #fff; border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
-          .domain-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
-          .domain-header h3 { margin: 0; font-size: 15px; color: #333; display: flex; align-items: center; gap: 8px; }
-          .domain-header h3 span { color: #0066ff; }
-          .toggle-icon { font-size: 11px; color: #888; transition: transform 0.2s ease; }
-          .domain-total-badge { background: #e8f3ff; color: #0066ff; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; }
-          .domain-content { margin-top: 12px; border-top: 1px dashed #eef0f3; padding-top: 8px; }
         </style>
       </head>
       <body>
@@ -231,7 +259,7 @@ export async function onRequestGet(context) {
             <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
-          <!-- 1. 顶部概览（可点击展开全量明细） -->
+          <!-- 1. 顶部概览（点击展开全量明细） -->
           <div class="stats-grid">
             <div class="stat-card" onclick="toggleElement('today-detail-panel', 'today-icon')">
               <div class="label">今日访问量</div>
@@ -245,7 +273,7 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 今日全量明细面板（默认隐藏） -->
+          <!-- 今日全量明细面板 -->
           <div class="panel" id="today-detail-panel" style="display: none; border: 2px solid #0066ff;">
             <h2 class="panel-title" style="color: #0066ff;">
               📋 今日全量访问明细（共 ${todayVisits} 条记录）
@@ -263,7 +291,7 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 昨日全量明细面板（默认隐藏） -->
+          <!-- 昨日全量明细面板 -->
           <div class="panel" id="yesterday-detail-panel" style="display: none; border: 2px solid #8e44ad;">
             <h2 class="panel-title" style="color: #8e44ad;">
               📜 昨日全量访问明细（共 ${yesterdayVisits} 条记录）
@@ -289,44 +317,41 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 3. 今日域名排行榜 -->
+          <!-- 3. 今日域名排行榜（点击整行展开明细） -->
           <div class="panel">
             <h2 class="panel-title">
-              🏆 今日域名流量排行榜
-              <span class="sub-tip">⏱️ 仅统计今日数据 (每天0点重置)</span>
+              🏆 今日域名流量排行榜 (点击展开明细)
+              <span class="sub-tip">⏱️ 仅统计今日数据</span>
             </h2>
-            <table>
-              <thead>
-                <tr><th style="width: 70px; text-align: center;">排名</th><th>访问域名</th><th>今日访问量</th></tr>
-              </thead>
-              <tbody>
-                ${domainRankHtml || '<tr><td colspan="3" style="text-align:center;">今日暂无访问数据</td></tr>'}
-              </tbody>
-            </table>
+            <div style="overflow-x: auto;">
+              <table>
+                <thead>
+                  <tr><th style="width: 70px; text-align: center;">排名</th><th>访问域名</th><th>今日访问量</th></tr>
+                </thead>
+                <tbody>
+                  ${domainRankHtml || '<tr><td colspan="3" style="text-align:center;">今日暂无访问数据</td></tr>'}
+                </tbody>
+              </table>
+            </div>
           </div>
 
-          <!-- 4. 今日城市排行榜 -->
+          <!-- 4. 今日城市排行榜（点击整行展开明细） -->
           <div class="panel">
             <h2 class="panel-title">
-              🏙️ 今日热门访问城市排行榜 (Top 15)
-              <span class="sub-tip">⏱️ 仅统计今日数据 (每天0点重置)</span>
+              🏙️ 今日热门访问城市排行榜 (点击展开明细)
+              <span class="sub-tip">⏱️ Top 15 城市</span>
             </h2>
-            <table>
-              <thead>
-                <tr><th style="width: 70px; text-align: center;">排名</th><th>国家 / 地区</th><th>城市</th><th>今日访问次数</th></tr>
-              </thead>
-              <tbody>
-                ${cityRankHtml || '<tr><td colspan="4" style="text-align:center;">今日暂无访问数据</td></tr>'}
-              </tbody>
-            </table>
+            <div style="overflow-x: auto;">
+              <table>
+                <thead>
+                  <tr><th style="width: 70px; text-align: center;">排名</th><th>国家 / 地区</th><th>城市</th><th>今日访问次数</th></tr>
+                </thead>
+                <tbody>
+                  ${cityRankHtml || '<tr><td colspan="4" style="text-align:center;">今日暂无访问数据</td></tr>'}
+                </tbody>
+              </table>
+            </div>
           </div>
-
-          <!-- 5. 今日各域名详细访客记录 -->
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h2 style="color: #2c3e50; font-size: 16px; margin: 0;">📍 今日各域名明细记录 (点击展开)</h2>
-            <span style="font-size: 12px; color: #27ae60;">⏱️ 仅展示今日数据 (每天0点重置)</span>
-          </div>
-          ${domainCardsHtml || '<div class="panel" style="text-align:center; padding:20px; color:#888;">今日暂无访客明细记录</div>'}
 
         </div>
 
@@ -336,8 +361,12 @@ export async function onRequestGet(context) {
             const icon = document.getElementById(iconId);
             if (!content) return;
             
+            // 如果是表格行 (TR)
+            const isRow = content.tagName === 'TR';
+            const showStyle = isRow ? 'table-row' : 'block';
+
             if (content.style.display === 'none') {
-              content.style.display = 'block';
+              content.style.display = showStyle;
               if (icon) icon.innerText = '▲';
             } else {
               content.style.display = 'none';
