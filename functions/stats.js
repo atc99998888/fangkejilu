@@ -71,7 +71,7 @@ export async function onRequestGet(context) {
       });
     }
 
-    // 4. 查询【今日】与【昨日】域名数据
+    // 4. 查询【今日】与【昨日】域名数据（用于对比）
     const domainRankRes = await env.DB.prepare(`
       SELECT domain, COUNT(*) as domain_total 
       FROM visits 
@@ -92,7 +92,7 @@ export async function onRequestGet(context) {
       yesterdayDomainMap[item.domain] = item.domain_total;
     });
 
-    // 5. 查询【今日】与【昨日】城市数据（全量排列）
+    // 5. 查询【今日】与【昨日】城市数据（移除 LIMIT 限制，排列所有城市）
     const cityRankRes = await env.DB.prepare(`
       SELECT country, city, COUNT(*) as city_total 
       FROM visits 
@@ -132,40 +132,22 @@ export async function onRequestGet(context) {
     const todayTableRowsHtml = renderTableRows(todayDetails);
     const yesterdayTableRowsHtml = renderTableRows(yesterdayDetails);
 
-    // 构建【按域名归类】和【按城市归类】的数据映射
+    // 构建【按域名归类】和【按城市归类】的数据映射，方便嵌入排行榜展开层
     const domainDetailsMap = {};
     const cityDetailsMap = {};
-    // 地图数据映射（城市中文名 -> 访问量）
-    const mapCityCountData = {};
 
     todayDetails.forEach(item => {
+      // 域名归类
       if (!domainDetailsMap[item.domain]) domainDetailsMap[item.domain] = [];
       domainDetailsMap[item.domain].push(item);
 
+      // 城市归类 (唯一 Key: 国家_城市)
       const cityKey = `${item.country}_${item.city}`;
       if (!cityDetailsMap[cityKey]) cityDetailsMap[cityKey] = [];
       cityDetailsMap[cityKey].push(item);
-
-      const zhCity = translateCity(item.city);
-      if (zhCity !== '未知城市') {
-        mapCityCountData[zhCity] = (mapCityCountData[zhCity] || 0) + 1;
-      }
     });
 
-    // 生成散点地图所需格式：[{name: '北京', value: [116.46, 39.92, 12]}, ...]
-    const cityGeoCoords = getCityGeoCoords();
-    const mapDataArray = [];
-    Object.keys(mapCityCountData).forEach(cityName => {
-      const coord = cityGeoCoords[cityName];
-      if (coord) {
-        mapDataArray.push({
-          name: cityName,
-          value: [...coord, mapCityCountData[cityName]]
-        });
-      }
-    });
-
-    // 1. 生成可展开的域名排行榜 HTML
+    // 1. 生成可展开的域名排行榜 HTML (含昨日对比)
     let domainRankHtml = domainRank.map((item, index) => {
       const domain = item.domain;
       const list = domainDetailsMap[domain] || [];
@@ -205,7 +187,7 @@ export async function onRequestGet(context) {
       `;
     }).join('');
 
-    // 2. 生成可展开的城市排行榜 HTML (全量展示)
+    // 2. 生成可展开的城市排行榜 HTML (含昨日对比，已全量列出)
     let cityRankHtml = cityRank.map((item, index) => {
       const cityKey = `${item.country}_${item.city}`;
       const list = cityDetailsMap[cityKey] || [];
@@ -252,9 +234,6 @@ export async function onRequestGet(context) {
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>多域名访客数据统计控制台</title>
-        <!-- 引入 ECharts 库与中国地图 JS -->
-        <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/echarts@4.9.0/map/js/china.js"></script>
         <style>
           * { box-sizing: border-box; }
           body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background: #f0f2f5; color: #333; margin: 0; }
@@ -274,37 +253,25 @@ export async function onRequestGet(context) {
           .panel-title .sub-tip { font-size: 12px; color: #27ae60; font-weight: normal; }
 
           .chart-container { position: relative; width: 100%; height: 220px; margin-top: 10px; }
-          .map-container { position: relative; width: 100%; height: 460px; margin-top: 10px; }
           canvas { width: 100%!important; height: 100%!important; }
 
           table { width: 100%; border-collapse: collapse; margin-top: 4px; }
           th, td { border: 1px solid #eef0f3; padding: 10px; text-align: left; font-size: 13px; }
           th { background-color: #f8f9fa; color: #555; }
 
+          /* 可点击行样式 */
           tr.clickable-row { cursor: pointer; transition: background-color 0.15s ease; }
           tr.clickable-row:hover { background-color: #f0f7ff!important; }
           .arrow-icon { font-size: 10px; color: #888; margin-left: 6px; display: inline-block; transition: transform 0.2s ease; }
 
+          /* 嵌套明细表格 */
           .detail-cell { padding: 0!important; background-color: #fcfdfe!important; }
           .inner-table-wrapper { padding: 12px 16px; background: #f4f8fb; border-bottom: 2px solid #e1e9f0; }
           .inner-title { font-size: 12px; color: #444; margin-bottom: 8px; font-weight: 500; }
           .inner-table-wrapper table { background: #fff; }
           .inner-table-wrapper th { background-color: #eaf2f9; }
 
-          code { 
-            background: #f1f3f5; 
-            padding: 2px 6px; 
-            border-radius: 4px; 
-            font-family: monospace; 
-            font-size: 12px; 
-            color: #d63384; 
-            max-width: 170px;
-            display: inline-block;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            vertical-align: middle;
-          }
+          code { background: #f1f3f5; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #d63384; }
 
           .rank-badge { display: inline-block; width: 20px; height: 20px; line-height: 20px; border-radius: 50%; background: #e0e0e0; color: #333; font-weight: bold; font-size: 11px; text-align: center; }
           .rank-1 { background: #ffd700; color: #fff; }
@@ -320,7 +287,7 @@ export async function onRequestGet(context) {
             <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
-          <!-- 1. 顶部概览 -->
+          <!-- 1. 顶部概览（点击展开全量明细） -->
           <div class="stats-grid">
             <div class="stat-card" onclick="toggleElement('today-detail-panel', 'today-icon')">
               <div class="label">今日访问量</div>
@@ -378,16 +345,7 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 3. 今日城市分布式访客地图 (ECharts 城市散点图) -->
-          <div class="panel">
-            <h2 class="panel-title">
-              📍 今日城市分布式访客地图
-              <span class="sub-tip">💡 气泡大小与颜色代表访客量级别（点击查看具体数据）</span>
-            </h2>
-            <div id="chinaMap" class="map-container"></div>
-          </div>
-
-          <!-- 4. 今日域名排行榜 -->
+          <!-- 3. 今日域名排行榜（点击整行展开明细） -->
           <div class="panel">
             <h2 class="panel-title">
               🏆 今日域名流量排行榜 (点击展开明细)
@@ -410,7 +368,7 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 5. 城市排行榜 -->
+          <!-- 4. 城市排行榜（点击整行展开明细） -->
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问城市排行榜 (点击展开明细)
@@ -454,7 +412,6 @@ export async function onRequestGet(context) {
             }
           }
 
-          // 绘制 7 天趋势图
           (function drawChart() {
             const chartData = ${JSON.stringify(last7DaysData)};
             const canvas = document.getElementById('trendChart');
@@ -533,111 +490,6 @@ export async function onRequestGet(context) {
               ctx.fillText(p.displayDate, p.x, height - 10);
             });
           })();
-
-          // 绘制城市分布散点地图 (ECharts)
-          (function initMap() {
-            const mapDom = document.getElementById('chinaMap');
-            if (!mapDom) return;
-            const myChart = echarts.init(mapDom);
-
-            // 数据格式：[{name: '深圳', value: [114.07, 22.62, 15]}, ...]
-            const mapData = ${JSON.stringify(mapDataArray)};
-
-            const values = mapData.map(d => d.value[2]);
-            const maxVal = Math.max(...values, 10);
-            const minVal = 1;
-
-            const option = {
-              backgroundColor: '#ffffff',
-              tooltip: {
-                trigger: 'item',
-                formatter: function (params) {
-                  if (params.seriesType === 'scatter' || params.seriesType === 'effectScatter') {
-                    const count = params.value[2];
-                    return '📍 <strong>' + params.name + '</strong><br/>今日访客量：<strong style="color:#ff4d4f; font-size: 15px;">' + count + '</strong> 次';
-                  }
-                  return params.name;
-                }
-              },
-              visualMap: {
-                min: minVal,
-                max: maxVal,
-                splitNumber: 5,
-                left: '20',
-                bottom: '20',
-                dimension: 2, // 对应 value 数组中的第 3 个元素（访客量）
-                text: ['高', '低'],
-                title: ['今日访客量级别'],
-                realtime: false,
-                calculable: true,
-                inRange: {
-                  color: ['#56b4e9', '#0072b2', '#e69f00', '#d55e00', '#cc0000'],
-                  symbolSize: [10, 30] // 气泡根据数值从 10px 到 30px 变大
-                },
-                textStyle: {
-                  color: '#333',
-                  fontSize: 12
-                }
-              },
-              geo: {
-                map: 'china',
-                roam: true,
-                zoom: 1.25,
-                label: {
-                  show: false
-                },
-                itemStyle: {
-                  normal: {
-                    areaColor: '#f3f4f6',
-                    borderColor: '#d1d5db',
-                    borderWidth: 1
-                  },
-                  emphasis: {
-                    areaColor: '#e5e7eb'
-                  }
-                }
-              },
-              series: [
-                {
-                  name: '城市访客量',
-                  type: 'effectScatter', // 带有涟漪光圈动画的散点
-                  coordinateSystem: 'geo',
-                  data: mapData,
-                  showEffectOn: 'render',
-                  rippleEffect: {
-                    brushType: 'stroke',
-                    scale: 3,
-                    period: 4
-                  },
-                  hoverAnimation: true,
-                  label: {
-                    formatter: '{b}',
-                    position: 'right',
-                    show: true,
-                    fontSize: 11,
-                    fontWeight: 'bold',
-                    color: '#1f2937'
-                  },
-                  itemStyle: {
-                    shadowBlur: 10,
-                    shadowColor: 'rgba(0, 0, 0, 0.2)'
-                  },
-                  zlevel: 1
-                }
-              ]
-            };
-
-            myChart.setOption(option);
-
-            // 点击散点显示提示框
-            myChart.on('click', function (params) {
-              if (params.seriesType === 'effectScatter') {
-                alert('📍 城市：' + params.name + '\n📊 今日访客量：' + params.value[2] + ' 次');
-              }
-            });
-
-            window.addEventListener('resize', () => myChart.resize());
-          })();
         </script>
       </body>
       </html>
@@ -650,35 +502,6 @@ export async function onRequestGet(context) {
       headers: { "Content-Type": "text/plain; charset=utf-8" }
     });
   }
-}
-
-// 常见城市经纬度对照字典
-function getCityGeoCoords() {
-  return {
-    '北京': [116.46, 39.92], '上海': [121.48, 31.22], '天津': [117.20, 39.13], '重庆': [106.54, 29.59],
-    '香港': [114.17, 22.28], '澳门': [113.54, 22.19], '台北': [121.50, 25.05], '高雄': [120.31, 22.61],
-    '广州': [113.23, 23.16], '深圳': [114.07, 22.62], '珠海': [113.52, 22.30], '汕头': [116.69, 23.39],
-    '佛山': [113.11, 23.05], '韶关': [113.62, 24.84], '湛江': [110.359, 21.27], '肇庆': [112.47, 23.05],
-    '江门': [113.06, 22.61], '茂名': [110.88, 21.68], '惠州': [114.41, 23.09], '梅州': [116.1, 24.3],
-    '汕尾': [115.37, 22.78], '河源': [114.68, 23.73], '阳江': [111.95, 21.85], '清远': [113.01, 23.7],
-    '东莞': [113.75, 23.04], '中山': [113.38, 22.52], '潮州': [116.63, 23.68], '揭阳': [116.35, 23.55], '云浮': [112.02, 22.93],
-    '太原': [112.53, 37.87], '大同': [113.30, 40.12], '济南': [117.00, 36.65], '青岛': [120.33, 36.07],
-    '烟台': [121.39, 37.52], '潍坊': [119.10, 36.62], '临沂': [118.35, 35.05], '杭州': [120.19, 30.26],
-    '宁波': [121.56, 29.86], '温州': [120.65, 28.01], '嘉兴': [120.76, 30.77], '湖州': [120.10, 30.86],
-    '绍兴': [120.58, 30.01], '金华': [119.64, 29.12], '台州': [121.42, 28.66], '南京': [118.78, 32.04],
-    '无锡': [120.29, 31.59], '徐州': [117.20, 34.26], '常州': [119.95, 31.79], '苏州': [120.62, 31.32],
-    '南通': [120.86, 32.01], '扬州': [119.42, 32.39], '镇江': [119.44, 32.20], '郑州': [113.65, 34.76],
-    '洛阳': [112.44, 34.70], '武汉': [114.31, 30.52], '宜昌': [111.30, 30.70], '襄阳': [112.14, 32.04],
-    '长沙': [112.98, 28.19], '株洲': [113.16, 27.83], '衡阳': [112.61, 26.89], '岳阳': [113.09, 29.37],
-    '成都': [104.06, 30.67], '绵阳': [104.73, 31.48], '德阳': [104.38, 31.13], '宜宾': [104.56, 28.77],
-    '福州': [119.30, 26.08], '厦门': [118.10, 24.46], '泉州': [118.58, 24.93], '合肥': [117.27, 31.86],
-    '芜湖': [118.37, 31.33], '石家庄': [114.48, 38.03], '唐山': [118.18, 39.63], '沈阳': [123.38, 41.80],
-    '大连': [121.62, 38.92], '长春': [125.32, 43.86], '哈尔滨': [126.63, 45.75], '南昌': [115.89, 28.68],
-    '赣州': [114.92, 25.85], '西安': [108.95, 34.27], '兰州': [103.73, 36.03], '西宁': [101.74, 36.56],
-    '银川': [106.27, 38.47], '乌鲁木齐': [87.68, 43.77], '拉萨': [91.11, 29.97], '南宁': [108.33, 22.84],
-    '桂林': [110.28, 25.29], '昆明': [102.71, 25.04], '贵阳': [106.71, 26.57], '海口': [110.35, 20.02],
-    '三亚': [109.51, 18.25]
-  };
 }
 
 function decodePunycodePart(input) {
