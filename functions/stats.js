@@ -26,7 +26,17 @@ export async function onRequestGet(context) {
     `).all();
     const domainRank = domainRankRes?.results || [];
 
-    // 3. 查询各域名下的详细访问记录（包含时间、IP、国家、城市）
+    // 3. 查询城市排行榜
+    const cityRankRes = await env.DB.prepare(`
+      SELECT country, city, COUNT(*) as city_total 
+      FROM visits 
+      GROUP BY country, city 
+      ORDER BY city_total DESC 
+      LIMIT 15
+    `).all();
+    const cityRank = cityRankRes?.results || [];
+
+    // 4. 查询各域名下的详细访问记录（包含时间、IP、国家、城市）
     const detailsRes = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
       FROM visits 
@@ -35,7 +45,6 @@ export async function onRequestGet(context) {
     const details = detailsRes?.results || [];
 
     const totalDomains = domainRank.length;
-    const uniqueCountries = new Set(details.map(d => d.country)).size;
     const uniqueCities = new Set(details.map(d => d.city)).size;
 
     const groupedDetails = {};
@@ -55,8 +64,18 @@ export async function onRequestGet(context) {
       </tr>
     `).join('');
 
-    // 各域名明细卡片 HTML（展示最新的访问时间、IP、国家与城市）
-    let domainCardsHtml = domainRank.map(item => {
+    // 城市排行榜 HTML
+    let cityRankHtml = cityRank.map((item, index) => `
+      <tr>
+        <td style="text-align: center;"><span class="rank-badge rank-${index + 1}">${index + 1}</span></td>
+        <td>${translateCountry(item.country)}</td>
+        <td><strong>${translateCity(item.city)}</strong></td>
+        <td><span class="pv-count">${item.city_total} 次</span></td>
+      </tr>
+    `).join('');
+
+    // 各域名明细卡片 HTML（支持点击展开/折叠）
+    let domainCardsHtml = domainRank.map((item, index) => {
       const domain = item.domain;
       const list = groupedDetails[domain] || [];
       const rows = list.map(row => `
@@ -70,19 +89,21 @@ export async function onRequestGet(context) {
 
       return `
         <div class="domain-card">
-          <div class="domain-header">
-            <h3>🌐 访问域名：<span>${escapeHtml(domain)}</span></h3>
+          <div class="domain-header" onclick="toggleCard(${index})">
+            <h3>🌐 访问域名：<span>${escapeHtml(domain)}</span> <span class="toggle-icon" id="icon-${index}">▼</span></h3>
             <span class="domain-total-badge">该域名总访客：${item.domain_total} 次</span>
           </div>
-          <div style="overflow-x: auto;">
-            <table>
-              <thead>
-                <tr><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
-              </thead>
-              <tbody>
-                ${rows || '<tr><td colspan="4" style="text-align:center;">暂无明细数据</td></tr>'}
-              </tbody>
-            </table>
+          <div class="domain-content" id="content-${index}" style="display: none;">
+            <div style="overflow-x: auto;">
+              <table>
+                <thead>
+                  <tr><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
+                </thead>
+                <tbody>
+                  ${rows || '<tr><td colspan="4" style="text-align:center;">暂无明细数据</td></tr>'}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       `;
@@ -99,35 +120,39 @@ export async function onRequestGet(context) {
           * { box-sizing: border-box; }
           body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background: #f0f2f5; color: #333; margin: 0; }
           .container { max-width: 1000px; margin: 0 auto; }
-          .header { text-align: center; margin-bottom: 25px; }
-          .header h1 { margin: 0; color: #1a1a1a; font-size: 26px; }
+          .header { text-align: center; margin-bottom: 20px; }
+          .header h1 { margin: 0; color: #1a1a1a; font-size: 22px; }
           
-          .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 25px; }
-          .stat-card { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); text-align: center; }
-          .stat-card .num { font-size: 28px; font-weight: bold; color: #0066ff; margin-top: 5px; }
-          .stat-card .label { font-size: 14px; color: #666; }
+          /* 优化：调小、规范顶部概览数据卡片 */
+          .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+          .stat-card { background: #fff; padding: 12px 16px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); text-align: center; }
+          .stat-card .num { font-size: 20px; font-weight: bold; color: #0066ff; margin-top: 2px; }
+          .stat-card .label { font-size: 12px; color: #666; }
 
-          .panel { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); margin-bottom: 25px; }
-          .panel-title { font-size: 18px; margin-top: 0; margin-bottom: 15px; border-bottom: 2px solid #f0f2f5; padding-bottom: 10px; color: #2c3e50; }
+          .panel { background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); margin-bottom: 20px; }
+          .panel-title { font-size: 16px; margin-top: 0; margin-bottom: 12px; border-bottom: 1px solid #f0f2f5; padding-bottom: 8px; color: #2c3e50; }
 
-          table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-          th, td { border: 1px solid #eef0f3; padding: 12px; text-align: left; font-size: 14px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+          th, td { border: 1px solid #eef0f3; padding: 10px; text-align: left; font-size: 13px; }
           th { background-color: #f8f9fa; color: #555; }
           tr:nth-child(even) { background-color: #fafbfc; }
 
-          code { background: #f1f3f5; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 13px; color: #d63384; }
+          code { background: #f1f3f5; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 12px; color: #d63384; }
 
-          .rank-badge { display: inline-block; width: 24px; height: 24px; line-height: 24px; border-radius: 50%; background: #e0e0e0; color: #333; font-weight: bold; font-size: 12px; }
+          .rank-badge { display: inline-block; width: 20px; height: 20px; line-height: 20px; border-radius: 50%; background: #e0e0e0; color: #333; font-weight: bold; font-size: 11px; text-align: center; }
           .rank-1 { background: #ffd700; color: #fff; }
           .rank-2 { background: #c0c0c0; color: #fff; }
           .rank-3 { background: #cd7f32; color: #fff; }
           .pv-count { color: #27ae60; font-weight: bold; }
 
-          .domain-card { background: #fff; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
-          .domain-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f0f2f5; padding-bottom: 12px; margin-bottom: 12px; }
-          .domain-header h3 { margin: 0; font-size: 16px; color: #333; }
+          /* 折叠面板样式 */
+          .domain-card { background: #fff; border-radius: 8px; padding: 12px 16px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
+          .domain-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
+          .domain-header h3 { margin: 0; font-size: 15px; color: #333; display: flex; align-items: center; gap: 8px; }
           .domain-header h3 span { color: #0066ff; }
-          .domain-total-badge { background: #e8f3ff; color: #0066ff; padding: 4px 12px; border-radius: 15px; font-size: 13px; font-weight: 500; }
+          .toggle-icon { font-size: 11px; color: #888; transition: transform 0.2s ease; }
+          .domain-total-badge { background: #e8f3ff; color: #0066ff; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; }
+          .domain-content { margin-top: 12px; border-top: 1px dashed #eef0f3; padding-top: 8px; }
         </style>
       </head>
       <body>
@@ -136,11 +161,10 @@ export async function onRequestGet(context) {
             <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
-          <!-- 1. 顶部概览 -->
+          <!-- 1. 规范化顶栏概览 -->
           <div class="stats-grid">
             <div class="stat-card"><div class="label">全站总访问量 (PV)</div><div class="num">${totalVisits}</div></div>
             <div class="stat-card"><div class="label">已被访问域名数</div><div class="num">${totalDomains}</div></div>
-            <div class="stat-card"><div class="label">覆盖国家/地区</div><div class="num">${uniqueCountries}</div></div>
             <div class="stat-card"><div class="label">覆盖城市数</div><div class="num">${uniqueCities}</div></div>
           </div>
 
@@ -149,7 +173,7 @@ export async function onRequestGet(context) {
             <h2 class="panel-title">🏆 域名流量排行榜</h2>
             <table>
               <thead>
-                <tr><th style="width: 80px; text-align: center;">排名</th><th>访问域名</th><th>累计访客量</th></tr>
+                <tr><th style="width: 70px; text-align: center;">排名</th><th>访问域名</th><th>累计访客量</th></tr>
               </thead>
               <tbody>
                 ${domainRankHtml || '<tr><td colspan="3" style="text-align:center;">暂无数据</td></tr>'}
@@ -157,11 +181,38 @@ export async function onRequestGet(context) {
             </table>
           </div>
 
-          <!-- 3. 各域名详细访客分布（含时间与 IP） -->
-          <h2 style="color: #2c3e50; font-size: 18px; margin-bottom: 15px;">📍 各域名详细访客记录</h2>
-          ${domainCardsHtml || '<div class="panel" style="text-align:center; padding:30px; color:#888;">暂无数据</div>'}
+          <!-- 3. 城市排行榜 -->
+          <div class="panel">
+            <h2 class="panel-title">🏙️ 热门访问城市排行榜 (Top 15)</h2>
+            <table>
+              <thead>
+                <tr><th style="width: 70px; text-align: center;">排名</th><th>国家 / 地区</th><th>城市</th><th>访问次数</th></tr>
+              </thead>
+              <tbody>
+                ${cityRankHtml || '<tr><td colspan="4" style="text-align:center;">暂无数据</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 4. 各域名详细访客记录（点开折叠） -->
+          <h2 style="color: #2c3e50; font-size: 16px; margin-bottom: 12px;">📍 各域名明细记录 (点击展开)</h2>
+          ${domainCardsHtml || '<div class="panel" style="text-align:center; padding:20px; color:#888;">暂无数据</div>'}
 
         </div>
+
+        <script>
+          function toggleCard(index) {
+            const content = document.getElementById('content-' + index);
+            const icon = document.getElementById('icon-' + index);
+            if (content.style.display === 'none') {
+              content.style.display = 'block';
+              icon.innerText = '▲';
+            } else {
+              content.style.display = 'none';
+              icon.innerText = '▼';
+            }
+          }
+        </script>
       </body>
       </html>
     `;
