@@ -31,7 +31,24 @@ export async function onRequestGet(context) {
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
-    // 2. 获取最近 7 天每日访问量
+    // 2. 查询【今日】与【昨日】的全量明细记录
+    const todayDetailsRes = await env.DB.prepare(`
+      SELECT domain, ip, country, city, visit_time 
+      FROM visits 
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
+      ORDER BY id DESC
+    `).all();
+    const todayDetails = todayDetailsRes?.results || [];
+
+    const yesterdayDetailsRes = await env.DB.prepare(`
+      SELECT domain, ip, country, city, visit_time 
+      FROM visits 
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
+      ORDER BY id DESC
+    `).all();
+    const yesterdayDetails = yesterdayDetailsRes?.results || [];
+
+    // 3. 获取最近 7 天每日访问量
     const last7DaysRes = await env.DB.prepare(`
       SELECT DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) as date, COUNT(*) as count 
       FROM visits 
@@ -54,7 +71,7 @@ export async function onRequestGet(context) {
       });
     }
 
-    // 3. 查询【今日】域名排行榜
+    // 4. 查询【今日】域名排行榜
     const domainRankRes = await env.DB.prepare(`
       SELECT domain, COUNT(*) as domain_total 
       FROM visits 
@@ -64,7 +81,7 @@ export async function onRequestGet(context) {
     `).all();
     const domainRank = domainRankRes?.results || [];
 
-    // 4. 查询【今日】城市排行榜
+    // 5. 查询【今日】城市排行榜
     const cityRankRes = await env.DB.prepare(`
       SELECT country, city, COUNT(*) as city_total 
       FROM visits 
@@ -75,22 +92,33 @@ export async function onRequestGet(context) {
     `).all();
     const cityRank = cityRankRes?.results || [];
 
-    // 5. 查询【今日】详细记录
-    const detailsRes = await env.DB.prepare(`
-      SELECT domain, ip, country, city, visit_time 
-      FROM visits 
-      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
-      ORDER BY id DESC
-    `).all();
-    const details = detailsRes?.results || [];
-
+    // 构建按域名归类的今日明细 HTML
     const groupedDetails = {};
-    details.forEach(item => {
+    todayDetails.forEach(item => {
       if (!groupedDetails[item.domain]) {
         groupedDetails[item.domain] = [];
       }
       groupedDetails[item.domain].push(item);
     });
+
+    // 渲染通用明细表格的函数
+    const renderTableRows = (list) => {
+      if (!list || list.length === 0) {
+        return '<tr><td colspan="5" style="text-align:center; color:#999;">暂无访问记录</td></tr>';
+      }
+      return list.map(row => `
+        <tr>
+          <td><strong>${escapeHtml(punycodeToUnicode(row.domain))}</strong></td>
+          <td><code>${formatDate(row.visit_time)}</code></td>
+          <td><code>${escapeHtml(row.ip || 'Unknown')}</code></td>
+          <td>${translateCountry(row.country)}</td>
+          <td>${translateCity(row.city)}</td>
+        </tr>
+      `).join('');
+    };
+
+    const todayTableRowsHtml = renderTableRows(todayDetails);
+    const yesterdayTableRowsHtml = renderTableRows(yesterdayDetails);
 
     // 域名排行榜 HTML
     let domainRankHtml = domainRank.map((item, index) => `
@@ -111,7 +139,7 @@ export async function onRequestGet(context) {
       </tr>
     `).join('');
 
-    // 各域名明细卡片 HTML
+    // 各域名卡片 HTML
     let domainCardsHtml = domainRank.map((item, index) => {
       const domain = item.domain;
       const decodedDomainName = punycodeToUnicode(domain);
@@ -127,7 +155,7 @@ export async function onRequestGet(context) {
 
       return `
         <div class="domain-card">
-          <div class="domain-header" onclick="toggleCard(${index})">
+          <div class="domain-header" onclick="toggleElement('content-${index}', 'icon-${index}')">
             <h3>🌐 访问域名：<span>${escapeHtml(decodedDomainName)}</span> <span class="toggle-icon" id="icon-${index}">▼</span></h3>
             <span class="domain-total-badge">今日访客：${item.domain_total} 次</span>
           </div>
@@ -162,10 +190,11 @@ export async function onRequestGet(context) {
           .header h1 { margin: 0; color: #1a1a1a; font-size: 22px; }
           
           .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
-          .stat-card { background: #fff; padding: 16px 20px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); text-align: center; }
+          .stat-card { background: #fff; padding: 16px 20px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); text-align: center; cursor: pointer; transition: all 0.2s ease; border: 1px solid transparent; }
+          .stat-card:hover { border-color: #0066ff; box-shadow: 0 4px 12px rgba(0,102,255,0.15); transform: translateY(-2px); }
           .stat-card .num { font-size: 24px; font-weight: bold; color: #0066ff; margin-top: 4px; }
-          .stat-card .label { font-size: 13px; color: #666; }
-          .stat-card .tip { font-size: 11px; color: #999; margin-top: 2px; }
+          .stat-card .label { font-size: 13px; color: #666; font-weight: 500; }
+          .stat-card .tip { font-size: 11px; color: #0066ff; margin-top: 4px; font-weight: bold; }
 
           .panel { background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); margin-bottom: 20px; }
           .panel-title { font-size: 16px; margin-top: 0; margin-bottom: 12px; border-bottom: 1px solid #f0f2f5; padding-bottom: 8px; color: #2c3e50; display: flex; justify-content: space-between; align-items: center; }
@@ -202,19 +231,57 @@ export async function onRequestGet(context) {
             <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
+          <!-- 1. 顶部概览（可点击展开全量明细） -->
           <div class="stats-grid">
-            <div class="stat-card">
+            <div class="stat-card" onclick="toggleElement('today-detail-panel', 'today-icon')">
               <div class="label">今日访问量</div>
               <div class="num">${todayVisits}</div>
-              <div class="tip">💡 今日 00:00 至今（每天0点重置）</div>
+              <div class="tip">👇 点击展开/收起今日访问明细 <span id="today-icon">▼</span></div>
             </div>
-            <div class="stat-card">
+            <div class="stat-card" onclick="toggleElement('yesterday-detail-panel', 'yesterday-icon')">
               <div class="label">昨日访问量</div>
               <div class="num">${yesterdayVisits}</div>
-              <div class="tip">💡 昨日全天访问量</div>
+              <div class="tip">👇 点击展开/收起昨日访问明细 <span id="yesterday-icon">▼</span></div>
             </div>
           </div>
 
+          <!-- 今日全量明细面板（默认隐藏） -->
+          <div class="panel" id="today-detail-panel" style="display: none; border: 2px solid #0066ff;">
+            <h2 class="panel-title" style="color: #0066ff;">
+              📋 今日全量访问明细（共 ${todayVisits} 条记录）
+              <span class="sub-tip">⏱️ 今日 00:00 至今</span>
+            </h2>
+            <div style="overflow-x: auto; max-height: 400px;">
+              <table>
+                <thead>
+                  <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
+                </thead>
+                <tbody>
+                  ${todayTableRowsHtml}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 昨日全量明细面板（默认隐藏） -->
+          <div class="panel" id="yesterday-detail-panel" style="display: none; border: 2px solid #8e44ad;">
+            <h2 class="panel-title" style="color: #8e44ad;">
+              📜 昨日全量访问明细（共 ${yesterdayVisits} 条记录）
+              <span class="sub-tip" style="color: #8e44ad;">⏱️ 昨日全天</span>
+            </h2>
+            <div style="overflow-x: auto; max-height: 400px;">
+              <table>
+                <thead>
+                  <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
+                </thead>
+                <tbody>
+                  ${yesterdayTableRowsHtml}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 2. 最近 7 天访问趋势图 -->
           <div class="panel">
             <h2 class="panel-title">📈 最近 7 天访问趋势图</h2>
             <div class="chart-container">
@@ -222,6 +289,7 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
+          <!-- 3. 今日域名排行榜 -->
           <div class="panel">
             <h2 class="panel-title">
               🏆 今日域名流量排行榜
@@ -237,6 +305,7 @@ export async function onRequestGet(context) {
             </table>
           </div>
 
+          <!-- 4. 今日城市排行榜 -->
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 今日热门访问城市排行榜 (Top 15)
@@ -252,8 +321,9 @@ export async function onRequestGet(context) {
             </table>
           </div>
 
+          <!-- 5. 今日各域名详细访客记录 -->
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h2 style="color: #2c3e50; font-size: 16px; margin: 0;">📍 各域名明细记录 (点击展开)</h2>
+            <h2 style="color: #2c3e50; font-size: 16px; margin: 0;">📍 今日各域名明细记录 (点击展开)</h2>
             <span style="font-size: 12px; color: #27ae60;">⏱️ 仅展示今日数据 (每天0点重置)</span>
           </div>
           ${domainCardsHtml || '<div class="panel" style="text-align:center; padding:20px; color:#888;">今日暂无访客明细记录</div>'}
@@ -261,15 +331,17 @@ export async function onRequestGet(context) {
         </div>
 
         <script>
-          function toggleCard(index) {
-            const content = document.getElementById('content-' + index);
-            const icon = document.getElementById('icon-' + index);
+          function toggleElement(contentId, iconId) {
+            const content = document.getElementById(contentId);
+            const icon = document.getElementById(iconId);
+            if (!content) return;
+            
             if (content.style.display === 'none') {
               content.style.display = 'block';
-              icon.innerText = '▲';
+              if (icon) icon.innerText = '▲';
             } else {
               content.style.display = 'none';
-              icon.innerText = '▼';
+              if (icon) icon.innerText = '▼';
             }
           }
 
