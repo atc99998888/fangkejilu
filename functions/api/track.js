@@ -9,7 +9,7 @@ export async function onRequestPost(context) {
   };
 
   try {
-    // 自动全新初始化数据表（单行标准 SQL，防止语法解析截断）
+    // 自动全新初始化数据表（单行 SQL）
     await env.DB.exec("CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL, ip TEXT DEFAULT 'Unknown', city TEXT DEFAULT 'Unknown', country TEXT DEFAULT 'Unknown', visit_time DATETIME DEFAULT CURRENT_TIMESTAMP);");
 
     // 获取来源域名
@@ -26,10 +26,24 @@ export async function onRequestPost(context) {
       domain = url.hostname;
     }
 
-    // 获取访客 IP、城市和国家（Cloudflare 边缘节点自动提供）
+    // 获取访客 IP、城市和国家
     const ip = request.headers.get("cf-connecting-ip") || "Unknown";
     const city = request.cf?.city || 'Unknown';
     const country = request.cf?.country || 'Unknown';
+
+    // 24小时去重逻辑：查询该 IP 在过去24小时内是否访问过当前域名
+    if (ip !== "Unknown") {
+      const recentVisit = await env.DB.prepare(
+        "SELECT id FROM visits WHERE domain = ? AND ip = ? AND visit_time >= datetime('now', '-1 day') LIMIT 1"
+      ).bind(domain, ip).first();
+
+      // 如果 24 小时内已有记录，直接返回成功但不重复写入
+      if (recentVisit) {
+        return new Response(JSON.stringify({ success: true, message: "24h duplicate visit ignored" }), {
+          headers: corsHeaders
+        });
+      }
+    }
 
     // 写入 D1 数据库
     await env.DB.prepare(
