@@ -10,7 +10,7 @@ export async function onRequestGet(context) {
   }
 
   try {
-    // 自动初始化与数据表防断层补全
+    // 自动全新初始化数据表
     await env.DB.exec(`
       CREATE TABLE IF NOT EXISTS visits (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,7 +25,7 @@ export async function onRequestGet(context) {
     const totalVisitsRes = await env.DB.prepare(`SELECT COUNT(*) as total FROM visits`).first();
     const totalVisits = totalVisitsRes?.total || 0;
 
-    // 2. 查询域名排行榜（按总访问量倒序）
+    // 2. 查询域名排行榜
     const domainRankRes = await env.DB.prepare(`
       SELECT domain, COUNT(*) as domain_total 
       FROM visits 
@@ -34,7 +34,7 @@ export async function onRequestGet(context) {
     `).all();
     const domainRank = domainRankRes?.results || [];
 
-    // 3. 查询各域名下的国家和城市详细数据
+    // 3. 查询明细数据
     const detailsRes = await env.DB.prepare(`
       SELECT domain, country, city, COUNT(*) as city_visits 
       FROM visits 
@@ -43,12 +43,10 @@ export async function onRequestGet(context) {
     `).all();
     const details = detailsRes?.results || [];
 
-    // 计算统计指标
     const totalDomains = domainRank.length;
     const uniqueCountries = new Set(details.map(d => d.country)).size;
     const uniqueCities = new Set(details.map(d => d.city)).size;
 
-    // 将明细按域名分组归类
     const groupedDetails = {};
     details.forEach(item => {
       if (!groupedDetails[item.domain]) {
@@ -57,7 +55,6 @@ export async function onRequestGet(context) {
       groupedDetails[item.domain].push(item);
     });
 
-    // 域名排行榜 HTML
     let domainRankHtml = domainRank.map((item, index) => `
       <tr>
         <td style="text-align: center;"><span class="rank-badge rank-${index + 1}">${index + 1}</span></td>
@@ -66,7 +63,6 @@ export async function onRequestGet(context) {
       </tr>
     `).join('');
 
-    // 域名详细统计卡片 HTML
     let domainCardsHtml = domainRank.map(item => {
       const domain = item.domain;
       const list = groupedDetails[domain] || [];
@@ -110,13 +106,11 @@ export async function onRequestGet(context) {
           .header { text-align: center; margin-bottom: 25px; }
           .header h1 { margin: 0; color: #1a1a1a; font-size: 26px; }
           
-          /* 概览指标卡片 */
           .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 25px; }
           .stat-card { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); text-align: center; }
           .stat-card .num { font-size: 28px; font-weight: bold; color: #0066ff; margin-top: 5px; }
           .stat-card .label { font-size: 14px; color: #666; }
 
-          /* 通用面板 */
           .panel { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); margin-bottom: 25px; }
           .panel-title { font-size: 18px; margin-top: 0; margin-bottom: 15px; border-bottom: 2px solid #f0f2f5; padding-bottom: 10px; color: #2c3e50; }
 
@@ -125,14 +119,12 @@ export async function onRequestGet(context) {
           th { background-color: #f8f9fa; color: #555; }
           tr:nth-child(even) { background-color: #fafbfc; }
 
-          /* 排行榜徽章 */
           .rank-badge { display: inline-block; width: 24px; height: 24px; line-height: 24px; border-radius: 50%; background: #e0e0e0; color: #333; font-weight: bold; font-size: 12px; }
           .rank-1 { background: #ffd700; color: #fff; }
           .rank-2 { background: #c0c0c0; color: #fff; }
           .rank-3 { background: #cd7f32; color: #fff; }
           .pv-count { color: #27ae60; font-weight: bold; }
 
-          /* 域名明细卡片 */
           .domain-card { background: #fff; border-radius: 10px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
           .domain-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f0f2f5; padding-bottom: 12px; margin-bottom: 12px; }
           .domain-header h3 { margin: 0; font-size: 16px; color: #333; }
@@ -146,7 +138,6 @@ export async function onRequestGet(context) {
             <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
-          <!-- 1. 顶部数据大盘概览 -->
           <div class="stats-grid">
             <div class="stat-card"><div class="label">全站总访问量 (PV)</div><div class="num">${totalVisits}</div></div>
             <div class="stat-card"><div class="label">已被访问域名数</div><div class="num">${totalDomains}</div></div>
@@ -154,7 +145,6 @@ export async function onRequestGet(context) {
             <div class="stat-card"><div class="label">覆盖城市数</div><div class="num">${uniqueCities}</div></div>
           </div>
 
-          <!-- 2. 域名访问量排行榜 -->
           <div class="panel">
             <h2 class="panel-title">🏆 域名流量排行榜</h2>
             <table>
@@ -162,14 +152,13 @@ export async function onRequestGet(context) {
                 <tr><th style="width: 80px; text-align: center;">排名</th><th>访问域名</th><th>累计访客量</th></tr>
               </thead>
               <tbody>
-                ${domainRankHtml || '<tr><td colspan="3" style="text-align:center;">数据库已就绪，等待新访客接入...</td></tr>'}
+                ${domainRankHtml || '<tr><td colspan="3" style="text-align:center;">全新数据库初始化成功，等待访客数据上报...</td></tr>'}
               </tbody>
             </table>
           </div>
 
-          <!-- 3. 每个域名的详细城市来源列表 -->
           <h2 style="color: #2c3e50; font-size: 18px; margin-bottom: 15px;">📍 各域名详细访客来源</h2>
-          ${domainCardsHtml || '<div class="panel" style="text-align:center; padding:30px; color:#888;">数据库初始化成功，暂无明细数据。只要有人访问网站首页，数据就会实时显示在这里！</div>'}
+          ${domainCardsHtml || '<div class="panel" style="text-align:center; padding:30px; color:#888;">暂无明细数据。访问任意挂载上报代码的网站首页即可自动计入！</div>'}
 
         </div>
       </body>
@@ -178,43 +167,29 @@ export async function onRequestGet(context) {
 
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
   } catch (error) {
-    return new Response(`后台数据库交互失败：${error.message}\n${error.stack}`, { 
+    return new Response(`数据库交互异常：${error.message}\n${error.stack}`, { 
       status: 500,
       headers: { "Content-Type": "text/plain; charset=utf-8" }
     });
   }
 }
 
-// 转义 HTML 字符防注入
 function escapeHtml(str) {
   return String(str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-// 国家代码中文字典转换
 function translateCountry(code) {
   const countryMap = {
-    'CN': '🇨🇳 中国',
-    'HK': '🇭🇰 中国香港',
-    'MO': '🇲🇴 中国澳门',
-    'TW': '🇹🇼 中国台湾',
-    'US': '🇺🇸 美国',
-    'JP': '🇯🇵 日本',
-    'KR': '🇰🇷 韩国',
-    'SG': '🇸🇬 新加坡',
-    'GB': '🇬🇧 英国',
-    'DE': '🇩🇪 德国',
-    'CA': '🇨🇦 加拿大',
-    'AU': '🇦🇺 澳大利亚',
-    'RU': '🇷🇺 俄罗斯',
-    'Unknown': '未知国家'
+    'CN': '🇨🇳 中国', 'HK': '🇭🇰 中国香港', 'MO': '🇲🇴 中国澳门', 'TW': '🇹🇼 中国台湾',
+    'US': '🇺🇸 美国', 'JP': '🇯🇵 日本', 'KR': '🇰🇷 韩国', 'SG': '🇸🇬 新加坡',
+    'GB': '🇬🇧 英国', 'DE': '🇩🇪 德国', 'CA': '🇨🇦 加拿大', 'AU': '🇦🇺 澳大利亚',
+    'RU': '🇷🇺 俄罗斯', 'Unknown': '未知国家'
   };
   return countryMap[code] || code || '未知国家';
 }
 
-// 全量中国地级市拼音/英文转中文
 function translateCity(city) {
   if (!city || city === 'Unknown') return '未知城市';
-
   const cityMap = {
     'Beijing': '北京', 'Shanghai': '上海', 'Tianjin': '天津', 'Chongqing': '重庆',
     'Hong Kong': '香港', 'Macau': '澳门', 'Taipei': '台北', 'Kaohsiung': '高雄',
@@ -289,6 +264,5 @@ function translateCity(city) {
     'Kunming': '昆明', 'Guiyang': '贵阳', 'Haikou': '海口', 'Sanya': '三亚',
     'Zunyi': '遵义', 'Dali': '大理', 'Lijiang': '丽江', 'Xishuangbanna': '西双版纳'
   };
-
   return cityMap[city] || city;
 }
