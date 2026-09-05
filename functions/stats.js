@@ -10,7 +10,7 @@ export async function onRequestGet(context) {
   }
 
   try {
-    // 自动全新初始化数据表（单行标准 SQL，防止语法解析截断）
+    // 自动全新初始化数据表（单行 SQL）
     await env.DB.exec("CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL, ip TEXT DEFAULT 'Unknown', city TEXT DEFAULT 'Unknown', country TEXT DEFAULT 'Unknown', visit_time DATETIME DEFAULT CURRENT_TIMESTAMP);");
 
     // 1. 查询全站总访问量
@@ -26,23 +26,13 @@ export async function onRequestGet(context) {
     `).all();
     const domainRank = domainRankRes?.results || [];
 
-    // 3. 查询各域名下的国家和城市汇总数据
+    // 3. 查询各域名下的详细访问记录（包含时间、IP、国家、城市）
     const detailsRes = await env.DB.prepare(`
-      SELECT domain, country, city, COUNT(*) as city_visits 
-      FROM visits 
-      GROUP BY domain, country, city 
-      ORDER BY domain ASC, city_visits DESC
-    `).all();
-    const details = detailsRes?.results || [];
-
-    // 4. 查询最近 50 条详细访问日志（含具体时间与 IP）
-    const recentLogsRes = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
       FROM visits 
-      ORDER BY id DESC 
-      LIMIT 50
+      ORDER BY id DESC
     `).all();
-    const recentLogs = recentLogsRes?.results || [];
+    const details = detailsRes?.results || [];
 
     const totalDomains = domainRank.length;
     const uniqueCountries = new Set(details.map(d => d.country)).size;
@@ -65,15 +55,16 @@ export async function onRequestGet(context) {
       </tr>
     `).join('');
 
-    // 各域名明细卡片 HTML
+    // 各域名明细卡片 HTML（展示最新的访问时间、IP、国家与城市）
     let domainCardsHtml = domainRank.map(item => {
       const domain = item.domain;
       const list = groupedDetails[domain] || [];
       const rows = list.map(row => `
         <tr>
+          <td><code>${formatDate(row.visit_time)}</code></td>
+          <td><code>${escapeHtml(row.ip || 'Unknown')}</code></td>
           <td>${translateCountry(row.country)}</td>
           <td>${translateCity(row.city)}</td>
-          <td><strong>${row.city_visits}</strong> 次</td>
         </tr>
       `).join('');
 
@@ -83,28 +74,19 @@ export async function onRequestGet(context) {
             <h3>🌐 访问域名：<span>${escapeHtml(domain)}</span></h3>
             <span class="domain-total-badge">该域名总访客：${item.domain_total} 次</span>
           </div>
-          <table>
-            <thead>
-              <tr><th>国家 / 地区</th><th>城市</th><th>访问次数</th></tr>
-            </thead>
-            <tbody>
-              ${rows || '<tr><td colspan="3" style="text-align:center;">暂无明细数据</td></tr>'}
-            </tbody>
-          </table>
+          <div style="overflow-x: auto;">
+            <table>
+              <thead>
+                <tr><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
+              </thead>
+              <tbody>
+                ${rows || '<tr><td colspan="4" style="text-align:center;">暂无明细数据</td></tr>'}
+              </tbody>
+            </table>
+          </div>
         </div>
       `;
     }).join('');
-
-    // 最近访问日志 HTML（含格式化时间）
-    let recentLogsHtml = recentLogs.map(log => `
-      <tr>
-        <td><code>${formatDate(log.visit_time)}</code></td>
-        <td><strong>${escapeHtml(log.domain)}</strong></td>
-        <td><code>${escapeHtml(log.ip || 'Unknown')}</code></td>
-        <td>${translateCountry(log.country)}</td>
-        <td>${translateCity(log.city)}</td>
-      </tr>
-    `).join('');
 
     const html = `
       <!DOCTYPE html>
@@ -175,23 +157,8 @@ export async function onRequestGet(context) {
             </table>
           </div>
 
-          <!-- 3. 最近 50 条实时访客明细（含时间与 IP） -->
-          <div class="panel">
-            <h2 class="panel-title">⏱️ 最近访客实时明细 (最新 50 条)</h2>
-            <div style="overflow-x: auto;">
-              <table>
-                <thead>
-                  <tr><th>访问时间 (北京时间)</th><th>访问域名</th><th>访客 IP</th><th>国家/地区</th><th>城市</th></tr>
-                </thead>
-                <tbody>
-                  ${recentLogsHtml || '<tr><td colspan="5" style="text-align:center;">暂无实时访问记录</td></tr>'}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- 4. 各域名城市来源分布 -->
-          <h2 style="color: #2c3e50; font-size: 18px; margin-bottom: 15px;">📍 各域名详细访客分布</h2>
+          <!-- 3. 各域名详细访客分布（含时间与 IP） -->
+          <h2 style="color: #2c3e50; font-size: 18px; margin-bottom: 15px;">📍 各域名详细访客记录</h2>
           ${domainCardsHtml || '<div class="panel" style="text-align:center; padding:30px; color:#888;">暂无数据</div>'}
 
         </div>
@@ -212,7 +179,6 @@ function escapeHtml(str) {
   return String(str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-// 格式化数据库 UTC 时间为北京时间 (UTC+8)
 function formatDate(utcString) {
   if (!utcString) return '未知时间';
   try {
