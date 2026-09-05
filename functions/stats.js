@@ -71,7 +71,7 @@ export async function onRequestGet(context) {
       });
     }
 
-    // 4. 查询【今日】域名排行榜
+    // 4. 查询【今日】与【昨日】域名数据（用于对比）
     const domainRankRes = await env.DB.prepare(`
       SELECT domain, COUNT(*) as domain_total 
       FROM visits 
@@ -81,16 +81,37 @@ export async function onRequestGet(context) {
     `).all();
     const domainRank = domainRankRes?.results || [];
 
-    // 5. 查询【今日】城市排行榜
+    const yesterdayDomainRes = await env.DB.prepare(`
+      SELECT domain, COUNT(*) as domain_total 
+      FROM visits 
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
+      GROUP BY domain
+    `).all();
+    const yesterdayDomainMap = {};
+    (yesterdayDomainRes?.results || []).forEach(item => {
+      yesterdayDomainMap[item.domain] = item.domain_total;
+    });
+
+    // 5. 查询【今日】与【昨日】城市数据（移除 LIMIT 限制，排列所有城市）
     const cityRankRes = await env.DB.prepare(`
       SELECT country, city, COUNT(*) as city_total 
       FROM visits 
       WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
       GROUP BY country, city 
-      ORDER BY city_total DESC 
-      LIMIT 15
+      ORDER BY city_total DESC
     `).all();
     const cityRank = cityRankRes?.results || [];
+
+    const yesterdayCityRes = await env.DB.prepare(`
+      SELECT country, city, COUNT(*) as city_total 
+      FROM visits 
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
+      GROUP BY country, city
+    `).all();
+    const yesterdayCityMap = {};
+    (yesterdayCityRes?.results || []).forEach(item => {
+      yesterdayCityMap[`${item.country}_${item.city}`] = item.city_total;
+    });
 
     // 渲染通用顶部卡片明细表格
     const renderTableRows = (list) => {
@@ -126,10 +147,12 @@ export async function onRequestGet(context) {
       cityDetailsMap[cityKey].push(item);
     });
 
-    // 1. 生成可展开的域名排行榜 HTML
+    // 1. 生成可展开的域名排行榜 HTML (含昨日对比)
     let domainRankHtml = domainRank.map((item, index) => {
       const domain = item.domain;
       const list = domainDetailsMap[domain] || [];
+      const yesterdayCount = yesterdayDomainMap[domain] || 0;
+      
       const innerRows = list.map(row => `
         <tr>
           <td><code>${formatDate(row.visit_time)}</code></td>
@@ -144,9 +167,10 @@ export async function onRequestGet(context) {
           <td style="text-align: center;"><span class="rank-badge rank-${index + 1}">${index + 1}</span></td>
           <td><strong>${escapeHtml(punycodeToUnicode(domain))}</strong> <span class="arrow-icon" id="domain-icon-${index}">▼</span></td>
           <td><span class="pv-count">${item.domain_total} 次</span></td>
+          <td><span class="pv-yesterday">${yesterdayCount} 次</span></td>
         </tr>
         <tr id="domain-detail-${index}" class="detail-row" style="display: none;">
-          <td colspan="3" class="detail-cell">
+          <td colspan="4" class="detail-cell">
             <div class="inner-table-wrapper">
               <div class="inner-title">🌐 域名 <strong>${escapeHtml(punycodeToUnicode(domain))}</strong> 今日访问明细：</div>
               <table>
@@ -163,10 +187,12 @@ export async function onRequestGet(context) {
       `;
     }).join('');
 
-    // 2. 生成可展开的城市排行榜 HTML
+    // 2. 生成可展开的城市排行榜 HTML (含昨日对比，已全量列出)
     let cityRankHtml = cityRank.map((item, index) => {
       const cityKey = `${item.country}_${item.city}`;
       const list = cityDetailsMap[cityKey] || [];
+      const yesterdayCount = yesterdayCityMap[cityKey] || 0;
+
       const innerRows = list.map(row => `
         <tr>
           <td><code>${formatDate(row.visit_time)}</code></td>
@@ -181,9 +207,10 @@ export async function onRequestGet(context) {
           <td>${translateCountry(item.country)}</td>
           <td><strong>${translateCity(item.city)}</strong> <span class="arrow-icon" id="city-icon-${index}">▼</span></td>
           <td><span class="pv-count">${item.city_total} 次</span></td>
+          <td><span class="pv-yesterday">${yesterdayCount} 次</span></td>
         </tr>
         <tr id="city-detail-${index}" class="detail-row" style="display: none;">
-          <td colspan="4" class="detail-cell">
+          <td colspan="5" class="detail-cell">
             <div class="inner-table-wrapper">
               <div class="inner-title">🏙️ 城市 <strong>${translateCity(item.city)}</strong> 今日来源域名与时间明细：</div>
               <table>
@@ -251,6 +278,7 @@ export async function onRequestGet(context) {
           .rank-2 { background: #c0c0c0; color: #fff; }
           .rank-3 { background: #cd7f32; color: #fff; }
           .pv-count { color: #27ae60; font-weight: bold; }
+          .pv-yesterday { color: #8e44ad; font-weight: bold; }
         </style>
       </head>
       <body>
@@ -321,33 +349,44 @@ export async function onRequestGet(context) {
           <div class="panel">
             <h2 class="panel-title">
               🏆 今日域名流量排行榜 (点击展开明细)
-              <span class="sub-tip">⏱️ 仅统计今日数据</span>
+              <span class="sub-tip">⏱️ 包含昨日数据对比</span>
             </h2>
             <div style="overflow-x: auto;">
               <table>
                 <thead>
-                  <tr><th style="width: 70px; text-align: center;">排名</th><th>访问域名</th><th>今日访问量</th></tr>
+                  <tr>
+                    <th style="width: 70px; text-align: center;">排名</th>
+                    <th>访问域名</th>
+                    <th>今日访问量</th>
+                    <th>昨日访问量</th>
+                  </tr>
                 </thead>
                 <tbody>
-                  ${domainRankHtml || '<tr><td colspan="3" style="text-align:center;">今日暂无访问数据</td></tr>'}
+                  ${domainRankHtml || '<tr><td colspan="4" style="text-align:center;">今日暂无访问数据</td></tr>'}
                 </tbody>
               </table>
             </div>
           </div>
 
-          <!-- 4. 今日城市排行榜（点击整行展开明细） -->
+          <!-- 4. 城市排行榜（点击整行展开明细） -->
           <div class="panel">
             <h2 class="panel-title">
-              🏙️ 今日热门访问城市排行榜 (点击展开明细)
-              <span class="sub-tip">⏱️ Top 15 城市</span>
+              🏙️ 热门访问城市排行榜 (点击展开明细)
+              <span class="sub-tip">⏱️ 已列出所有城市及昨日对比</span>
             </h2>
             <div style="overflow-x: auto;">
               <table>
                 <thead>
-                  <tr><th style="width: 70px; text-align: center;">排名</th><th>国家 / 地区</th><th>城市</th><th>今日访问次数</th></tr>
+                  <tr>
+                    <th style="width: 70px; text-align: center;">排名</th>
+                    <th>国家 / 地区</th>
+                    <th>城市</th>
+                    <th>今日访问次数</th>
+                    <th>昨日访问次数</th>
+                  </tr>
                 </thead>
                 <tbody>
-                  ${cityRankHtml || '<tr><td colspan="4" style="text-align:center;">今日暂无访问数据</td></tr>'}
+                  ${cityRankHtml || '<tr><td colspan="5" style="text-align:center;">今日暂无访问数据</td></tr>'}
                 </tbody>
               </table>
             </div>
@@ -361,7 +400,6 @@ export async function onRequestGet(context) {
             const icon = document.getElementById(iconId);
             if (!content) return;
             
-            // 如果是表格行 (TR)
             const isRow = content.tagName === 'TR';
             const showStyle = isRow ? 'table-row' : 'block';
 
