@@ -1,69 +1,67 @@
-export async function onRequestGet(context) {
+export async function onRequestPost(context) {
   const { request, env } = context;
 
-  // 后台查看密码（可自行修改）
-  const SECRET_KEY = "123456"; 
-  const url = new URL(request.url);
-
-  if (url.searchParams.get("key") !== SECRET_KEY) {
-    return new Response("未授权访问：请在 URL 末尾加上 ?key=你的密码", { status: 403 });
-  }
+  // 跨域响应头设置
+  const corsHeaders = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type"
+  };
 
   try {
-    const { results } = await env.DB.prepare(`
-      SELECT domain, country, city, COUNT(*) as total_visits 
-      FROM visits 
-      GROUP BY domain, country, city 
-      ORDER BY total_visits DESC
-    `).all();
+    // 自动创建数据库表（如果不存在）
+    await env.DB.exec(`
+      CREATE TABLE IF NOT EXISTS visits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        domain TEXT NOT NULL,
+        city TEXT DEFAULT 'Unknown',
+        country TEXT DEFAULT 'Unknown',
+        visit_time DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
 
-    let rowsHtml = (results || []).map(row => `
-      <tr>
-        <td><strong>${escapeHtml(row.domain)}</strong></td>
-        <td>${escapeHtml(row.country)}</td>
-        <td>${escapeHtml(row.city)}</td>
-        <td>${row.total_visits}</td>
-      </tr>
-    `).join('');
+    // 获取访问者真实的来源域名（如主域名或 71 个子域名之一）
+    const referer = request.headers.get("referer") || request.headers.get("origin") || "";
+    let domain = "Unknown";
+    if (referer) {
+      try {
+        domain = new URL(referer).hostname;
+      } catch (e) {
+        domain = referer;
+      }
+    } else {
+      const url = new URL(request.url);
+      domain = url.hostname;
+    }
 
-    const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <title>域名与城市访问统计后台</title>
-        <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 20px; background: #f9f9f9; }
-          .container { max-width: 900px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-          h2 { text-align: center; color: #333; }
-          table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-          th, td { border: 1px solid #eee; padding: 12px; text-align: left; }
-          th { background-color: #f4f4f4; color: #555; }
-          tr:nth-child(even) { background-color: #fafafa; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <h2>域名 - 访客城市统计报表</h2>
-          <table>
-            <thead>
-              <tr><th>访问域名</th><th>国家</th><th>城市</th><th>总访问量</th></tr>
-            </thead>
-            <tbody>
-              ${rowsHtml || '<tr><td colspan="4" style="text-align:center;">暂无访问数据</td></tr>'}
-            </tbody>
-          </table>
-        </div>
-      </body>
-      </html>
-    `;
+    // 获取 Cloudflare 原生识别的城市和国家
+    const city = request.cf?.city || 'Unknown';
+    const country = request.cf?.country || 'Unknown';
 
-    return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    // 写入数据库
+    await env.DB.prepare(
+      "INSERT INTO visits (domain, city, country) VALUES (?, ?, ?)"
+    ).bind(domain, city, country).run();
+
+    return new Response(JSON.stringify({ success: true }), {
+      headers: corsHeaders
+    });
   } catch (error) {
-    return new Response("数据库建立成功但尚无数据，请先访问一次网站首页。", { status: 200 });
+    return new Response(JSON.stringify({ success: false, error: error.message }), {
+      status: 500,
+      headers: corsHeaders
+    });
   }
 }
 
-function escapeHtml(str) {
-  return String(str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// 专门响应浏览器的 OPTIONS 预检请求（解决跨域报错）
+export async function onRequestOptions() {
+  return new Response(null, {
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type"
+    }
+  });
 }
