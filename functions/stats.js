@@ -2,7 +2,7 @@ export async function onRequestGet(context) {
   const { request, env } = context;
 
   // 后台访问密码
-  const SECRET_KEY = "123456"; 
+  const SECRET_KEY = "123456"; 
   const url = new URL(request.url);
 
   if (url.searchParams.get("key") !== SECRET_KEY) {
@@ -16,18 +16,18 @@ export async function onRequestGet(context) {
 
     // 2. 查询域名排行榜（按总访问量倒序）
     const domainRankRes = await env.DB.prepare(`
-      SELECT domain, COUNT(*) as domain_total 
-      FROM visits 
-      GROUP BY domain 
+      SELECT domain, COUNT(*) as domain_total 
+      FROM visits 
+      GROUP BY domain 
       ORDER BY domain_total DESC
     `).all();
     const domainRank = domainRankRes?.results || [];
 
     // 3. 查询各域名下的国家和城市详细数据
     const detailsRes = await env.DB.prepare(`
-      SELECT domain, country, city, COUNT(*) as city_visits 
-      FROM visits 
-      GROUP BY domain, country, city 
+      SELECT domain, country, city, COUNT(*) as city_visits 
+      FROM visits 
+      GROUP BY domain, country, city 
       ORDER BY domain ASC, city_visits DESC
     `).all();
     const details = detailsRes?.results || [];
@@ -98,7 +98,7 @@ export async function onRequestGet(context) {
           .container { max-width: 1000px; margin: 0 auto; }
           .header { text-align: center; margin-bottom: 25px; }
           .header h1 { margin: 0; color: #1a1a1a; font-size: 26px; }
-          
+          
           /* 概览指标卡片 */
           .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 25px; }
           .stat-card { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); text-align: center; }
