@@ -2,7 +2,7 @@ export async function onRequestGet(context) {
   const { request, env } = context;
 
   // 后台访问密码（可自由修改）
-  const SECRET_KEY = "123456"; 
+  const SECRET_KEY = "123456"; 
   const url = new URL(request.url);
 
   if (url.searchParams.get("key") !== SECRET_KEY) {
@@ -13,29 +13,28 @@ export async function onRequestGet(context) {
     // 自动初始化数据表（单行 SQL）
     await env.DB.exec("CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL, ip TEXT DEFAULT 'Unknown', city TEXT DEFAULT 'Unknown', country TEXT DEFAULT 'Unknown', visit_time DATETIME DEFAULT CURRENT_TIMESTAMP);");
 
-    // 1. 获取今日与昨日访问量 (基于北京时间 UTC+8)
+    // 1. 获取【今日访问量】与【昨日访问量】(基于北京时间 UTC+8，每日0点清零重新计数)
     const todayRes = await env.DB.prepare(`
-      SELECT COUNT(*) as count FROM visits 
+      SELECT COUNT(*) as count FROM visits 
       WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
     `).first();
     const todayVisits = todayRes?.count || 0;
 
     const yesterdayRes = await env.DB.prepare(`
-      SELECT COUNT(*) as count FROM visits 
+      SELECT COUNT(*) as count FROM visits 
       WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
-    // 2. 获取最近 7 天每日访问量 (含日期与数量)
+    // 2. 获取最近 7 天每日访问量 (折线图)
     const last7DaysRes = await env.DB.prepare(`
-      SELECT DATE(DATETIME(visit_time, '+8 hours')) as date, COUNT(*) as count 
-      FROM visits 
+      SELECT DATE(DATETIME(visit_time, '+8 hours')) as date, COUNT(*) as count 
+      FROM visits 
       WHERE DATE(DATETIME(visit_time, '+8 hours')) >= DATE(DATETIME('now', '+8 hours', '-6 days'))
       GROUP BY DATE(DATETIME(visit_time, '+8 hours'))
       ORDER BY date ASC
     `).all();
 
-    // 补全最近 7 天日期数据（防止某天无访问导致断档）
     const last7DaysData = [];
     const dbDaysMap = {};
     (last7DaysRes?.results || []).forEach(row => { dbDaysMap[row.date] = row.count; });
@@ -45,40 +44,40 @@ export async function onRequestGet(context) {
       const dateStr = d.toISOString().split('T')[0];
       last7DaysData.push({
         date: dateStr,
-        displayDate: dateStr.slice(5), // 显示 MM-DD
+        displayDate: dateStr.slice(5),
         count: dbDaysMap[dateStr] || 0
       });
     }
 
-    // 3. 查询域名排行榜
+    // 3. 查询【今日】域名排行榜 (今天0点重置后)
     const domainRankRes = await env.DB.prepare(`
-      SELECT domain, COUNT(*) as domain_total 
-      FROM visits 
-      GROUP BY domain 
+      SELECT domain, COUNT(*) as domain_total 
+      FROM visits 
+      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
+      GROUP BY domain 
       ORDER BY domain_total DESC
     `).all();
     const domainRank = domainRankRes?.results || [];
 
-    // 4. 查询城市排行榜
+    // 4. 查询【今日】城市排行榜 (今天0点重置后)
     const cityRankRes = await env.DB.prepare(`
-      SELECT country, city, COUNT(*) as city_total 
-      FROM visits 
-      GROUP BY country, city 
-      ORDER BY city_total DESC 
+      SELECT country, city, COUNT(*) as city_total 
+      FROM visits 
+      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
+      GROUP BY country, city 
+      ORDER BY city_total DESC 
       LIMIT 15
     `).all();
     const cityRank = cityRankRes?.results || [];
 
-    // 5. 查询各域名下的详细访问记录
+    // 5. 查询【今日】各域名下的详细访问记录 (今天0点重置后)
     const detailsRes = await env.DB.prepare(`
-      SELECT domain, ip, country, city, visit_time 
-      FROM visits 
+      SELECT domain, ip, country, city, visit_time 
+      FROM visits 
+      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
       ORDER BY id DESC
     `).all();
     const details = detailsRes?.results || [];
-
-    const totalDomains = domainRank.length;
-    const uniqueCities = new Set(details.map(d => d.city)).size;
 
     const groupedDetails = {};
     details.forEach(item => {
@@ -107,7 +106,7 @@ export async function onRequestGet(context) {
       </tr>
     `).join('');
 
-    // 各域名明细卡片 HTML（支持点击展开/折叠）
+    // 各域名明细卡片 HTML（仅包含今日记录）
     let domainCardsHtml = domainRank.map((item, index) => {
       const domain = item.domain;
       const decodedDomainName = punycodeToUnicode(domain);
@@ -125,7 +124,7 @@ export async function onRequestGet(context) {
         <div class="domain-card">
           <div class="domain-header" onclick="toggleCard(${index})">
             <h3>🌐 访问域名：<span>${escapeHtml(decodedDomainName)}</span> <span class="toggle-icon" id="icon-${index}">▼</span></h3>
-            <span class="domain-total-badge">该域名总访客：${item.domain_total} 次</span>
+            <span class="domain-total-badge">今日访客：${item.domain_total} 次</span>
           </div>
           <div class="domain-content" id="content-${index}" style="display: none;">
             <div style="overflow-x: auto;">
@@ -134,7 +133,7 @@ export async function onRequestGet(context) {
                   <tr><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
                 </thead>
                 <tbody>
-                  ${rows || '<tr><td colspan="4" style="text-align:center;">暂无明细数据</td></tr>'}
+                  ${rows || '<tr><td colspan="4" style="text-align:center;">今日暂无明细数据</td></tr>'}
                 </tbody>
               </table>
             </div>
@@ -156,16 +155,17 @@ export async function onRequestGet(context) {
           .container { max-width: 1000px; margin: 0 auto; }
           .header { text-align: center; margin-bottom: 20px; }
           .header h1 { margin: 0; color: #1a1a1a; font-size: 22px; }
-          
-          .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
-          .stat-card { background: #fff; padding: 12px 16px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); text-align: center; }
-          .stat-card .num { font-size: 20px; font-weight: bold; color: #0066ff; margin-top: 2px; }
-          .stat-card .label { font-size: 12px; color: #666; }
+          
+          .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
+          .stat-card { background: #fff; padding: 16px 20px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); text-align: center; }
+          .stat-card .num { font-size: 24px; font-weight: bold; color: #0066ff; margin-top: 4px; }
+          .stat-card .label { font-size: 13px; color: #666; }
+          .stat-card .tip { font-size: 11px; color: #999; margin-top: 2px; }
 
           .panel { background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); margin-bottom: 20px; }
-          .panel-title { font-size: 16px; margin-top: 0; margin-bottom: 12px; border-bottom: 1px solid #f0f2f5; padding-bottom: 8px; color: #2c3e50; }
+          .panel-title { font-size: 16px; margin-top: 0; margin-bottom: 12px; border-bottom: 1px solid #f0f2f5; padding-bottom: 8px; color: #2c3e50; display: flex; justify-content: space-between; align-items: center; }
+          .panel-title .sub-tip { font-size: 12px; color: #27ae60; font-weight: normal; }
 
-          /* K线图/折线图容器 */
           .chart-container { position: relative; width: 100%; height: 220px; margin-top: 10px; }
           canvas { width: 100%!important; height: 100%!important; }
 
@@ -197,12 +197,18 @@ export async function onRequestGet(context) {
             <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
-          <!-- 1. 概览：改为今日访问、昨日访问 -->
+          <!-- 1. 概览 (今日/昨日访问) -->
           <div class="stats-grid">
-            <div class="stat-card"><div class="label">今日访问量</div><div class="num">${todayVisits}</div></div>
-            <div class="stat-card"><div class="label">昨日访问量</div><div class="num">${yesterdayVisits}</div></div>
-            <div class="stat-card"><div class="label">已被访问域名数</div><div class="num">${totalDomains}</div></div>
-            <div class="stat-card"><div class="label">覆盖城市数</div><div class="num">${uniqueCities}</div></div>
+            <div class="stat-card">
+              <div class="label">今日访问量</div>
+              <div class="num">${todayVisits}</div>
+              <div class="tip">💡 今日 00:00 至今（每天0点重置）</div>
+            </div>
+            <div class="stat-card">
+              <div class="label">昨日访问量</div>
+              <div class="num">${yesterdayVisits}</div>
+              <div class="tip">💡 昨日全天访问量</div>
+            </div>
           </div>
 
           <!-- 2. 最近 7 天访问趋势图 -->
@@ -213,35 +219,44 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 3. 域名排行榜 -->
+          <!-- 3. 今日域名排行榜 -->
           <div class="panel">
-            <h2 class="panel-title">🏆 域名流量排行榜</h2>
+            <h2 class="panel-title">
+              🏆 今日域名流量排行榜
+              <span class="sub-tip">⏱️ 仅统计今日数据 (每天0点重置)</span>
+            </h2>
             <table>
               <thead>
-                <tr><th style="width: 70px; text-align: center;">排名</th><th>访问域名</th><th>累计访客量</th></tr>
+                <tr><th style="width: 70px; text-align: center;">排名</th><th>访问域名</th><th>今日访问量</th></tr>
               </thead>
               <tbody>
-                ${domainRankHtml || '<tr><td colspan="3" style="text-align:center;">暂无数据</td></tr>'}
+                ${domainRankHtml || '<tr><td colspan="3" style="text-align:center;">今日暂无访问数据</td></tr>'}
               </tbody>
             </table>
           </div>
 
-          <!-- 4. 城市排行榜 -->
+          <!-- 4. 今日城市排行榜 -->
           <div class="panel">
-            <h2 class="panel-title">🏙️ 热门访问城市排行榜 (Top 15)</h2>
+            <h2 class="panel-title">
+              🏙️ 今日热门访问城市排行榜 (Top 15)
+              <span class="sub-tip">⏱️ 仅统计今日数据 (每天0点重置)</span>
+            </h2>
             <table>
               <thead>
-                <tr><th style="width: 70px; text-align: center;">排名</th><th>国家 / 地区</th><th>城市</th><th>访问次数</th></tr>
+                <tr><th style="width: 70px; text-align: center;">排名</th><th>国家 / 地区</th><th>城市</th><th>今日访问次数</th></tr>
               </thead>
               <tbody>
-                ${cityRankHtml || '<tr><td colspan="4" style="text-align:center;">暂无数据</td></tr>'}
+                ${cityRankHtml || '<tr><td colspan="4" style="text-align:center;">今日暂无访问数据</td></tr>'}
               </tbody>
             </table>
           </div>
 
-          <!-- 5. 各域名详细访客记录（点开折叠） -->
-          <h2 style="color: #2c3e50; font-size: 16px; margin-bottom: 12px;">📍 各域名明细记录 (点击展开)</h2>
-          ${domainCardsHtml || '<div class="panel" style="text-align:center; padding:20px; color:#888;">暂无数据</div>'}
+          <!-- 5. 今日各域名详细访客记录 -->
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h2 style="color: #2c3e50; font-size: 16px; margin: 0;">📍 各域名明细记录 (点击展开)</h2>
+            <span style="font-size: 12px; color: #27ae60;">⏱️ 仅展示今日数据 (每天0点重置)</span>
+          </div>
+          ${domainCardsHtml || '<div class="panel" style="text-align:center; padding:20px; color:#888;">今日暂无访客明细记录</div>'}
 
         </div>
 
@@ -277,7 +292,7 @@ export async function onRequestGet(context) {
             const padding = { top: 35, bottom: 35, left: 25, right: 25 };
 
             const counts = chartData.map(d => d.count);
-            const maxVal = Math.max(...counts, 5); // 最少留 5 的高度区间
+            const maxVal = Math.max(...counts, 5);
 
             const stepX = (width - padding.left - padding.right) / (chartData.length - 1);
             const points = chartData.map((item, index) => {
@@ -286,7 +301,6 @@ export async function onRequestGet(context) {
               return { x, y, count: item.count, displayDate: item.displayDate };
             });
 
-            // 背景虚线网格
             ctx.strokeStyle = '#f0f0f0';
             ctx.setLineDash([4, 4]);
             ctx.beginPath();
@@ -298,7 +312,6 @@ export async function onRequestGet(context) {
             ctx.stroke();
             ctx.setLineDash([]);
 
-            // 渐变填充区域
             const gradient = ctx.createLinearGradient(0, padding.top, 0, height - padding.bottom);
             gradient.addColorStop(0, 'rgba(0, 102, 255, 0.25)');
             gradient.addColorStop(1, 'rgba(0, 102, 255, 0.00)');
@@ -311,7 +324,6 @@ export async function onRequestGet(context) {
             ctx.fillStyle = gradient;
             ctx.fill();
 
-            // 绘制主折线
             ctx.beginPath();
             ctx.strokeStyle = '#0066ff';
             ctx.lineWidth = 2.5;
@@ -321,9 +333,7 @@ export async function onRequestGet(context) {
             });
             ctx.stroke();
 
-            // 绘制数据圆点、日期和顶部数量标签
             points.forEach(p => {
-              // 圆点外圈
               ctx.beginPath();
               ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
               ctx.fillStyle = '#ffffff';
@@ -332,13 +342,11 @@ export async function onRequestGet(context) {
               ctx.lineWidth = 2;
               ctx.stroke();
 
-              // 顶部数值标签（显示每天具体数量）
               ctx.fillStyle = '#0066ff';
               ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto';
               ctx.textAlign = 'center';
               ctx.fillText(p.count + '次', p.x, p.y - 10);
 
-              // 底部日期标签
               ctx.fillStyle = '#666666';
               ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto';
               ctx.fillText(p.displayDate, p.x, height - 10);
@@ -351,14 +359,14 @@ export async function onRequestGet(context) {
 
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
   } catch (error) {
-    return new Response(`数据库交互异常：${error.message}\n${error.stack}`, { 
+    return new Response(`数据库交互异常：${error.message}\n${error.stack}`, { 
       status: 500,
       headers: { "Content-Type": "text/plain; charset=utf-8" }
     });
   }
 }
 
-// 轻量原生 Punycode 解码算法实现
+// Punycode 解码算法
 function decodePunycodePart(input) {
   const BASE = 36, TMIN = 1, TMAX = 26, SKEW = 38, DAMP = 700, INITIAL_BIAS = 72, INITIAL_N = 128;
   function adapt(delta, numPoints, firstTime) {
