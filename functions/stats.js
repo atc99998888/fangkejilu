@@ -1,7 +1,7 @@
 export async function onRequestGet(context) {
   const { request, env } = context;
 
-  // 后台访问密码
+  // 后台访问密码（可自由修改）
   const SECRET_KEY = "123456"; 
   const url = new URL(request.url);
 
@@ -10,6 +10,17 @@ export async function onRequestGet(context) {
   }
 
   try {
+    // 自动初始化与数据表防断层补全
+    await env.DB.exec(`
+      CREATE TABLE IF NOT EXISTS visits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        domain TEXT NOT NULL,
+        city TEXT DEFAULT 'Unknown',
+        country TEXT DEFAULT 'Unknown',
+        visit_time DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     // 1. 查询全站总访问量
     const totalVisitsRes = await env.DB.prepare(`SELECT COUNT(*) as total FROM visits`).first();
     const totalVisits = totalVisitsRes?.total || 0;
@@ -78,7 +89,7 @@ export async function onRequestGet(context) {
               <tr><th>国家 / 地区</th><th>城市</th><th>访问次数</th></tr>
             </thead>
             <tbody>
-              ${rows || '<tr><td colspan="3" style="text-align:center;">暂无数据</td></tr>'}
+              ${rows || '<tr><td colspan="3" style="text-align:center;">暂无明细数据</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -151,14 +162,14 @@ export async function onRequestGet(context) {
                 <tr><th style="width: 80px; text-align: center;">排名</th><th>访问域名</th><th>累计访客量</th></tr>
               </thead>
               <tbody>
-                ${domainRankHtml || '<tr><td colspan="3" style="text-align:center;">暂无数据</td></tr>'}
+                ${domainRankHtml || '<tr><td colspan="3" style="text-align:center;">数据库已就绪，等待新访客接入...</td></tr>'}
               </tbody>
             </table>
           </div>
 
           <!-- 3. 每个域名的详细城市来源列表 -->
           <h2 style="color: #2c3e50; font-size: 18px; margin-bottom: 15px;">📍 各域名详细访客来源</h2>
-          ${domainCardsHtml || '<div class="panel" style="text-align:center;">暂无明细数据</div>'}
+          ${domainCardsHtml || '<div class="panel" style="text-align:center; padding:30px; color:#888;">数据库初始化成功，暂无明细数据。只要有人访问网站首页，数据就会实时显示在这里！</div>'}
 
         </div>
       </body>
@@ -167,7 +178,10 @@ export async function onRequestGet(context) {
 
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
   } catch (error) {
-    return new Response(`后台读取错误: ${error.message}`, { status: 500 });
+    return new Response(`后台数据库交互失败：${error.message}\n${error.stack}`, { 
+      status: 500,
+      headers: { "Content-Type": "text/plain; charset=utf-8" }
+    });
   }
 }
 
