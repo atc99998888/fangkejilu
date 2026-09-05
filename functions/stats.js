@@ -1,7 +1,7 @@
 export async function onRequestGet(context) {
   const { request, env } = context;
 
-  // 后台访问密码（可修改）
+  // 后台访问密码
   const SECRET_KEY = "123456"; 
   const url = new URL(request.url);
 
@@ -10,17 +10,6 @@ export async function onRequestGet(context) {
   }
 
   try {
-    // 自动兼容性初始化：确保数据表及必要字段全部存在
-    await env.DB.exec(`
-      CREATE TABLE IF NOT EXISTS visits (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        domain TEXT NOT NULL,
-        city TEXT DEFAULT 'Unknown',
-        country TEXT DEFAULT 'Unknown',
-        visit_time DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
     // 1. 查询全站总访问量
     const totalVisitsRes = await env.DB.prepare(`SELECT COUNT(*) as total FROM visits`).first();
     const totalVisits = totalVisitsRes?.total || 0;
@@ -178,11 +167,7 @@ export async function onRequestGet(context) {
 
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
   } catch (error) {
-    // 精准捕获并直接输出具体错误原因，不再静默掩盖
-    return new Response(`后台读取数据库异常：${error.message}\n${error.stack}`, { 
-      status: 500,
-      headers: { "Content-Type": "text/plain; charset=utf-8" }
-    });
+    return new Response(`后台读取错误: ${error.message}`, { status: 500 });
   }
 }
 
