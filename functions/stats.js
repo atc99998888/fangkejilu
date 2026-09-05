@@ -10,6 +10,18 @@ export async function onRequestGet(context) {
   }
 
   try {
+    // 自动全新初始化数据表（包含 ip、visit_time 等全量字段）
+    await env.DB.exec(`
+      CREATE TABLE IF NOT EXISTS visits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        domain TEXT NOT NULL,
+        ip TEXT DEFAULT 'Unknown',
+        city TEXT DEFAULT 'Unknown',
+        country TEXT DEFAULT 'Unknown',
+        visit_time DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     // 1. 查询全站总访问量
     const totalVisitsRes = await env.DB.prepare(`SELECT COUNT(*) as total FROM visits`).first();
     const totalVisits = totalVisitsRes?.total || 0;
@@ -23,7 +35,7 @@ export async function onRequestGet(context) {
     `).all();
     const domainRank = domainRankRes?.results || [];
 
-    // 3. 查询明细数据
+    // 3. 查询各域名下的国家和城市汇总数据
     const detailsRes = await env.DB.prepare(`
       SELECT domain, country, city, COUNT(*) as city_visits 
       FROM visits 
@@ -31,6 +43,15 @@ export async function onRequestGet(context) {
       ORDER BY domain ASC, city_visits DESC
     `).all();
     const details = detailsRes?.results || [];
+
+    // 4. 查询最近 50 条详细访问日志（含具体时间与 IP）
+    const recentLogsRes = await env.DB.prepare(`
+      SELECT domain, ip, country, city, visit_time 
+      FROM visits 
+      ORDER BY id DESC 
+      LIMIT 50
+    `).all();
+    const recentLogs = recentLogsRes?.results || [];
 
     const totalDomains = domainRank.length;
     const uniqueCountries = new Set(details.map(d => d.country)).size;
@@ -44,6 +65,7 @@ export async function onRequestGet(context) {
       groupedDetails[item.domain].push(item);
     });
 
+    // 域名排行榜 HTML
     let domainRankHtml = domainRank.map((item, index) => `
       <tr>
         <td style="text-align: center;"><span class="rank-badge rank-${index + 1}">${index + 1}</span></td>
@@ -52,6 +74,7 @@ export async function onRequestGet(context) {
       </tr>
     `).join('');
 
+    // 各域名明细卡片 HTML
     let domainCardsHtml = domainRank.map(item => {
       const domain = item.domain;
       const list = groupedDetails[domain] || [];
@@ -81,6 +104,17 @@ export async function onRequestGet(context) {
       `;
     }).join('');
 
+    // 最近访问日志 HTML（含格式化时间）
+    let recentLogsHtml = recentLogs.map(log => `
+      <tr>
+        <td><code>${formatDate(log.visit_time)}</code></td>
+        <td><strong>${escapeHtml(log.domain)}</strong></td>
+        <td><code>${escapeHtml(log.ip || 'Unknown')}</code></td>
+        <td>${translateCountry(log.country)}</td>
+        <td>${translateCity(log.city)}</td>
+      </tr>
+    `).join('');
+
     const html = `
       <!DOCTYPE html>
       <html>
@@ -108,6 +142,8 @@ export async function onRequestGet(context) {
           th { background-color: #f8f9fa; color: #555; }
           tr:nth-child(even) { background-color: #fafbfc; }
 
+          code { background: #f1f3f5; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 13px; color: #d63384; }
+
           .rank-badge { display: inline-block; width: 24px; height: 24px; line-height: 24px; border-radius: 50%; background: #e0e0e0; color: #333; font-weight: bold; font-size: 12px; }
           .rank-1 { background: #ffd700; color: #fff; }
           .rank-2 { background: #c0c0c0; color: #fff; }
@@ -127,6 +163,7 @@ export async function onRequestGet(context) {
             <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
+          <!-- 1. 顶部概览 -->
           <div class="stats-grid">
             <div class="stat-card"><div class="label">全站总访问量 (PV)</div><div class="num">${totalVisits}</div></div>
             <div class="stat-card"><div class="label">已被访问域名数</div><div class="num">${totalDomains}</div></div>
@@ -134,6 +171,7 @@ export async function onRequestGet(context) {
             <div class="stat-card"><div class="label">覆盖城市数</div><div class="num">${uniqueCities}</div></div>
           </div>
 
+          <!-- 2. 域名排行榜 -->
           <div class="panel">
             <h2 class="panel-title">🏆 域名流量排行榜</h2>
             <table>
@@ -141,13 +179,29 @@ export async function onRequestGet(context) {
                 <tr><th style="width: 80px; text-align: center;">排名</th><th>访问域名</th><th>累计访客量</th></tr>
               </thead>
               <tbody>
-                ${domainRankHtml || '<tr><td colspan="3" style="text-align:center;">数据库已就绪，等待访客数据上报...</td></tr>'}
+                ${domainRankHtml || '<tr><td colspan="3" style="text-align:center;">暂无数据</td></tr>'}
               </tbody>
             </table>
           </div>
 
-          <h2 style="color: #2c3e50; font-size: 18px; margin-bottom: 15px;">📍 各域名详细访客来源</h2>
-          ${domainCardsHtml || '<div class="panel" style="text-align:center; padding:30px; color:#888;">暂无明细数据。访问任意挂载上报代码的网站首页即可自动计入！</div>'}
+          <!-- 3. 最近 50 条实时访客明细（含时间与 IP） -->
+          <div class="panel">
+            <h2 class="panel-title">⏱️ 最近访客实时明细 (最新 50 条)</h2>
+            <div style="overflow-x: auto;">
+              <table>
+                <thead>
+                  <tr><th>访问时间 (北京时间)</th><th>访问域名</th><th>访客 IP</th><th>国家/地区</th><th>城市</th></tr>
+                </thead>
+                <tbody>
+                  ${recentLogsHtml || '<tr><td colspan="5" style="text-align:center;">暂无实时访问记录</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 4. 各域名城市来源分布 -->
+          <h2 style="color: #2c3e50; font-size: 18px; margin-bottom: 15px;">📍 各域名详细访客分布</h2>
+          ${domainCardsHtml || '<div class="panel" style="text-align:center; padding:30px; color:#888;">暂无数据</div>'}
 
         </div>
       </body>
@@ -156,7 +210,7 @@ export async function onRequestGet(context) {
 
     return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
   } catch (error) {
-    return new Response(`后台数据库交互异常：${error.message}\n${error.stack}`, { 
+    return new Response(`数据库交互异常：${error.message}\n${error.stack}`, { 
       status: 500,
       headers: { "Content-Type": "text/plain; charset=utf-8" }
     });
@@ -165,6 +219,18 @@ export async function onRequestGet(context) {
 
 function escapeHtml(str) {
   return String(str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// 格式化数据库 UTC 时间为北京时间 (UTC+8)
+function formatDate(utcString) {
+  if (!utcString) return '未知时间';
+  try {
+    const date = new Date(utcString + " UTC");
+    if (isNaN(date.getTime())) return utcString;
+    return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+  } catch (e) {
+    return utcString;
+  }
 }
 
 function translateCountry(code) {
