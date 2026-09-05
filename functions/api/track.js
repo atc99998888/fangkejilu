@@ -9,12 +9,6 @@ export async function onRequestPost(context) {
   };
 
   try {
-    // 修正后的单行标准 SQL 语句，避免换行与字符导致 incomplete input 语法报错
-    const createTableSql = "CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL, city TEXT DEFAULT 'Unknown', country TEXT DEFAULT 'Unknown', visit_time DATETIME DEFAULT CURRENT_TIMESTAMP);";
-    
-    await env.DB.exec(createTableSql);
-
-    // 获取真实来源域名
     const referer = request.headers.get("referer") || request.headers.get("origin") || "";
     let domain = "Unknown";
     if (referer) {
@@ -28,18 +22,14 @@ export async function onRequestPost(context) {
       domain = url.hostname;
     }
 
-    // 获取地理位置
     const city = request.cf?.city || 'Unknown';
     const country = request.cf?.country || 'Unknown';
 
-    // 写入数据库
     await env.DB.prepare(
       "INSERT INTO visits (domain, city, country) VALUES (?, ?, ?)"
     ).bind(domain, city, country).run();
 
-    return new Response(JSON.stringify({ success: true }), {
-      headers: corsHeaders
-    });
+    return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
   } catch (error) {
     return new Response(JSON.stringify({ success: false, error: error.message }), {
       status: 500,
