@@ -18,30 +18,6 @@ export async function onRequestGet(context) {
     // 自动初始化数据表
     await env.DB.exec("CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL, ip TEXT DEFAULT 'Unknown', city TEXT DEFAULT 'Unknown', country TEXT DEFAULT 'Unknown', visit_time DATETIME DEFAULT CURRENT_TIMESTAMP);");
 
-    // ================= 【核心优化点：提取 Cloudflare 边缘节点传参】 =================
-    // 从 Cloudflare Header 中获取真实的 IP、国家与城市，精准度远高于外部 IPv6 库
-    const clientIp = request.headers.get("cf-connecting-ip") || "Unknown";
-    const clientCountry = request.headers.get("cf-ipcountry") || "Unknown";
-    
-    // Cloudflare 传入的城市名可能包含非 ASCII 字符或编码，进行安全解码
-    let clientCity = "Unknown";
-    const rawCity = request.headers.get("cf-ipcity");
-    if (rawCity) {
-      try {
-        clientCity = decodeURIComponent(rawCity);
-      } catch (e) {
-        clientCity = rawCity;
-      }
-    }
-
-    // 自动记录当前访问（如需记录域名，取 current hostname）
-    const currentDomain = url.hostname || "Unknown";
-    await env.DB.prepare(`
-      INSERT INTO visits (domain, ip, country, city) 
-      VALUES (?, ?, ?, ?)
-    `).bind(currentDomain, clientIp, clientCountry, clientCity).run();
-    // ==============================================================================
-
     // 1. 获取【今日访问量】与【昨日访问量】
     const todayRes = await env.DB.prepare(`
       SELECT COUNT(*) as count FROM visits 
@@ -55,22 +31,40 @@ export async function onRequestGet(context) {
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
+    // 数据标准化处理函数：确保 IP、国家、城市严格绑定不颠倒
+    const processDetails = (rows) => {
+      return (rows || []).map(row => {
+        const ip = row.ip || row.client_ip || 'Unknown';
+        const country = row.country || row.country_code || 'Unknown';
+        const city = row.city || 'Unknown';
+        return {
+          ...row,
+          ip: ip,
+          country: country,
+          city: city,
+          displayIp: escapeHtml(ip),
+          displayCountry: translateCountry(country),
+          displayCity: translateCity(city)
+        };
+      });
+    };
+
     // 2. 查询【今日】与【昨日】的全量明细记录
-    const todayDetailsRes = await env.DB.prepare(`
+    const todayDetailsRaw = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
       FROM visits 
       WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
       ORDER BY id DESC
     `).all();
-    const todayDetails = todayDetailsRes?.results || [];
+    const todayDetails = processDetails(todayDetailsRaw?.results);
 
-    const yesterdayDetailsRes = await env.DB.prepare(`
+    const yesterdayDetailsRaw = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
       FROM visits 
       WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
       ORDER BY id DESC
     `).all();
-    const yesterdayDetails = yesterdayDetailsRes?.results || [];
+    const yesterdayDetails = processDetails(yesterdayDetailsRaw?.results);
 
     // 3. 获取最近 7 天每日访问量
     const last7DaysRes = await env.DB.prepare(`
@@ -146,9 +140,9 @@ export async function onRequestGet(context) {
         <tr>
           <td><strong>${escapeHtml(punycodeToUnicode(row.domain))}</strong></td>
           <td><code>${formatDate(row.visit_time)}</code></td>
-          <td><code>${escapeHtml(row.ip || 'Unknown')}</code></td>
-          <td>${translateCountry(row.country)}</td>
-          <td>${translateCity(row.city)}</td>
+          <td><code>${row.displayIp}</code></td>
+          <td>${row.displayCountry}</td>
+          <td>${row.displayCity}</td>
         </tr>
       `).join('');
     };
@@ -180,9 +174,9 @@ export async function onRequestGet(context) {
       const innerRows = list.map(row => `
         <tr>
           <td><code>${formatDate(row.visit_time)}</code></td>
-          <td><code>${escapeHtml(row.ip || 'Unknown')}</code></td>
-          <td>${translateCountry(row.country)}</td>
-          <td>${translateCity(row.city)}</td>
+          <td><code>${row.displayIp}</code></td>
+          <td>${row.displayCountry}</td>
+          <td>${row.displayCity}</td>
         </tr>
       `).join('');
 
@@ -221,7 +215,7 @@ export async function onRequestGet(context) {
         <tr>
           <td><code>${formatDate(row.visit_time)}</code></td>
           <td><strong style="color:#0066ff;">${escapeHtml(punycodeToUnicode(row.domain))}</strong></td>
-          <td><code>${escapeHtml(row.ip || 'Unknown')}</code></td>
+          <td><code>${row.displayIp}</code></td>
         </tr>
       `).join('');
 
