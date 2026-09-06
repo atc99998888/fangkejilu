@@ -1,60 +1,4 @@
-// ==========================================
-// 1. 深度省市解析与精度打分引擎
-// ==========================================
-const PROVINCES = [
-  '陕西', '山西', '山东', '河南', '河北', '湖南', '湖北', '广东', '广西', 
-  '四川', '浙江', '江苏', '福建', '辽宁', '吉林', '黑龙江', '云南', '贵州', 
-  '甘肃', '青海', '内蒙古', '新疆', '西藏', '海南', '宁夏', '江西', '安徽', '台湾'
-];
-
-// 判断解析结果的“精细度得分”（得分越高越优先选择）
-function evaluatePrecision(locationStr) {
-  if (!locationStr || locationStr === '中国' || locationStr === '未知地区') return 0;
-  
-  // 匹配到具体“省+市/县”（如：陕西榆林、广东深圳）得最高分 3 分
-  for (let prov of PROVINCES) {
-    if (locationStr.includes(prov)) {
-      if (locationStr.length > prov.length) {
-        return 3; // 精准到地级市或县区
-      }
-      return 1; // 仅精准到省份
-    }
-  }
-
-  // 海外地区或直辖市（如：北京、东京、旧金山）得 2 分
-  if (locationStr.length >= 2) return 2;
-  return 0;
-}
-
-// 统一提取省市名称，去除“省”、“电信”、“机房”等杂质（优化：完整保留城市名，不截断）
-function cleanAndExtractLocation(rawStr) {
-  if (!rawStr) return null;
-
-  // 1. 优先提取国内“省+市”
-  for (let prov of PROVINCES) {
-    if (rawStr.includes(prov)) {
-      // 提取省份后的完整城市名称
-      let match = rawStr.match(new RegExp(`${prov}(?:省)?([\\u4e00-\\u9fa5]+)`));
-      if (match && match[1]) {
-        let cityName = match[1]
-          .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房)/g, '')
-          .trim();
-        if (cityName) {
-          return `${prov}${cityName}`;
-        }
-      }
-      return prov;
-    }
-  }
-
-  // 2. 基础杂质清洗
-  let cleaned = rawStr
-    .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房)/g, '')
-    .replace(/^中国\s*/, '')
-    .trim();
-
-  return cleaned || null;
-}
+import { PROVINCES, evaluatePrecision, cleanAndExtractLocation } from './geo.js';
 
 // 带超时控制的 Fetch 封装
 async function fetchWithTimeout(url, timeout = 1500) {
@@ -74,7 +18,7 @@ async function fetchWithTimeout(url, timeout = 1500) {
 }
 
 // ==========================================
-// 2. 全球/国内外 API 深度对接节点
+// 2. 全球/国内外 API 深度对接节点 (保留获取 IP 逻辑)
 // ==========================================
 
 // [国内接口 1] 百度 OpenData（国内地级市最精准）
