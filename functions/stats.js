@@ -1,7 +1,7 @@
 // 内存缓存，避免频繁重复请求外部 API
 const ipCache = new Map();
 
-// 辅助函数：将 GBK Buffer 转为 UTF-8 字符串（太平洋电脑网接口返回 GBK 编码）
+// 辅助函数：将 GBK Buffer 转为 UTF-8 字符串
 function decodeGBK(buffer) {
   try {
     const decoder = new TextDecoder('gbk');
@@ -12,13 +12,13 @@ function decodeGBK(buffer) {
   }
 }
 
-// 核心函数：免 Key 高精度 IP 解析（太平洋电脑网 + IP-API 备用）
+// 核心高精度 IP 解析函数：优先百度 API，备用太平洋电脑网
 async function fetchAccurateGeo(ip) {
   if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1') {
     return { country: 'CN', city: '局域网/本地' };
   }
 
-  // 清洗 IP，防止带有掩码或空格（例如 "114.114.114.114/24" -> "114.114.114.114"）
+  // 清洗 IP 格式（如处理带掩码情况 "114.114.114.114/24" -> "114.114.114.114"）
   let cleanIp = ip.split('/')[0].trim();
   if (cleanIp.startsWith('192.168.') || cleanIp.startsWith('10.')) {
     return { country: 'CN', city: '局域网/本地' };
@@ -29,15 +29,46 @@ async function fetchAccurateGeo(ip) {
     return ipCache.get(cleanIp);
   }
 
-  // === 方案 A：太平洋电脑网免 Key 公共接口（国内极速、含省市和运营商） ===
+  // === 方案 A：百度 OpenData IP 归属地 API（国内极速、带省市区及运营商） ===
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+    const baiduApi = `https://opendata.baidu.com/api.php?query=${encodeURIComponent(cleanIp)}&resource_id=6006&oe=utf8`;
+    const res = await fetch(baiduApi, {
+      method: 'GET',
+      headers: { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' 
+      },
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const locData = await res.json();
+      if (locData && locData.data && locData.data[0] && locData.data[0].location) {
+        let location = locData.data[0].location.trim();
+        // 清理掉前缀“中国”等重复词汇
+        location = location.replace(/^中国\s*/, '').replace(/\s+/g, ' ');
+
+        if (location) {
+          const result = { country: 'CN', city: location };
+          ipCache.set(cleanIp, result);
+          return result;
+        }
+      }
+    }
+  } catch (e) {
+    console.error(`百度 IP 接口请求失败 (${cleanIp}):`, e.message);
+  }
+
+  // === 方案 B：太平洋电脑网公共 API（备用源） ===
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2500);
 
     const res = await fetch(`http://whois.pconline.com.cn/ipJson.jsp?ip=${cleanIp}&json=true`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      },
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
       signal: controller.signal
     });
     clearTimeout(timeoutId);
@@ -59,7 +90,6 @@ async function fetchAccurateGeo(ip) {
           fullInfo = `${addr || pro || city}`.trim();
         }
 
-        // 清理掉前缀“中国”等重复词汇
         fullInfo = fullInfo.replace(/^中国\s*/, '').replace(/\s+/g, ' ');
 
         if (fullInfo) {
@@ -69,36 +99,8 @@ async function fetchAccurateGeo(ip) {
         }
       }
     }
-  } catch (e) {
-    console.error(`太平洋 IP 接口请求失败 (${cleanIp}):`, e.message);
-  }
-
-  // === 方案 B：IP-API 备用接口（免费、免 Key、支持中文） ===
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2500);
-
-    const res = await fetch(`http://ip-api.com/json/${cleanIp}?lang=zh-CN`, { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data.status === 'success') {
-        const province = data.regionName || '';
-        const city = data.city || '';
-        const isp = data.isp || '';
-        const fullInfo = `${province} ${city} ${isp}`.trim().replace(/\s+/g, ' ');
-
-        const result = {
-          country: data.countryCode || 'CN',
-          city: fullInfo || '未知城市'
-        };
-        ipCache.set(cleanIp, result);
-        return result;
-      }
-    }
   } catch (err) {
-    console.error(`IP-API 接口请求失败 (${cleanIp}):`, err.message);
+    console.error(`太平洋 IP 接口请求失败 (${cleanIp}):`, err.message);
   }
 
   return { country: 'CN', city: '未知城市' };
@@ -137,7 +139,7 @@ export async function onRequestGet(context) {
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
-    // 实时高精度 IP 解析
+    // 实时高精度 IP 解析（使用百度 API）
     const processDetails = async (rows) => {
       if (!rows || rows.length === 0) return [];
       
@@ -499,7 +501,7 @@ export async function onRequestGet(context) {
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问地区 / 运营商排行榜 (点击展开明细)
-              <span class="sub-tip">⏱️ 免 Key 高精度中文解析</span>
+              <span class="sub-tip">⏱️ 百度 OpenData 开放高精度解析</span>
             </h2>
             <div style="overflow-x: auto;">
               <table>
