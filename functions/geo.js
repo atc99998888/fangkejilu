@@ -1,11 +1,12 @@
 // ==========================================
-// 全国省份与地级市拼音转中文映射模块
+// 全国省份与地级市拼音转中文映射模块（全面增强版）
 // ==========================================
 
 export const PROVINCES = [
   '陕西', '山西', '山东', '河南', '河北', '湖南', '湖北', '广东', '广西', 
   '四川', '浙江', '江苏', '福建', '辽宁', '吉林', '黑龙江', '云南', '贵州', 
-  '甘肃', '青海', '内蒙古', '新疆', '西藏', '海南', '宁夏', '江西', '安徽', '台湾'
+  '甘肃', '青海', '内蒙古', '新疆', '西藏', '海南', '宁夏', '江西', '安徽', '台湾',
+  '北京', '上海', '天津', '重庆'
 ];
 
 export const PINYIN_PROVINCE_MAP = {
@@ -20,6 +21,8 @@ export const PINYIN_PROVINCE_MAP = {
 
 // 全国所有地级市拼音映射字典
 export const PINYIN_CITY_MAP = {
+  // 北京/上海/天津/重庆
+  'Beijing': '北京', 'Shanghai': '上海', 'Tianjin': '天津', 'Chongqing': '重庆',
   // 河南
   'Zhengzhou': '郑州', 'Kaifeng': '开封', 'Luoyang': '洛阳', 'Pingdingshan': '平顶山', 'Anyang': '安阳', 'Hebi': '鹤壁', 'Xinxiang': '新乡', 'Jiaozuo': '焦作', 'Puyang': '濮阳', 'Xuchang': '许昌', 'Luohe': '漯河', 'Sanmenxia': '三门峡', 'Nanyang': '南阳', 'Shangqiu': '商丘', 'Xinyang': '信阳', 'Zhoukou': '周口', 'Zhumadian': '驻马店',
   // 湖南
@@ -51,7 +54,7 @@ export const PINYIN_CITY_MAP = {
   // 辽宁
   'Shenyang': '沈阳', 'Dalian': '大连', 'Anshan': '鞍山', 'Fushun': '抚顺', 'Benxi': '本溪', 'Dandong': '丹东', 'Jinzhou': '锦州', 'Yingkou': '营口', 'Fuxin': '阜新', 'Liaoyang': '辽阳', 'Panjin': '盘锦', 'Tieling': '铁岭', 'Chaoyang': '朝阳', 'Huludao': '葫芦岛',
   // 黑龙江
-  'Harbin': '哈尔滨', 'Qiqihar': '齐齐哈尔', 'Jixi': '鸡西', 'Hegang': '鹤岗', 'Shuangyashan': '双鸭山', 'Daqing': '大庆', 'Yichun': '伊春', 'Jiamusi': '佳木斯', 'Qitaihe': '七台河', 'Mudanjiang': '牡丹江', 'Heihe': '黑河', 'Suihua': '绥化',
+  'Harbin': '哈尔滨', 'Qiqihar': '齐齐哈尔', 'Jixi': '鸡西', 'Hegang': '鹤岗', 'Shuangyashan': '双鸭山', 'Daqing': '大庆', 'Yichun': '伊春', 'Jiamusi': '佳木斯', 'Qitaihe': '七台河', 'Mudanjiang': '牡丹江', 'Hehei': '黑河', 'Suihua': '绥化',
   // 吉林
   'Changchun': '长春', 'Jilin': '吉林', 'Siping': '四平', 'Liaoyuan': '辽源', 'Tonghua': '通化', 'Baishan': '白山', 'Songyuan': '松原', 'Baicheng': '白城',
   // 云南
@@ -61,15 +64,15 @@ export const PINYIN_CITY_MAP = {
   // 甘肃
   'Lanzhou': '兰州', 'Jiayuguan': '嘉峪关', 'Jinchang': '金昌', 'Baiyin': '白银', 'Tianshui': '天水', 'Wuwei': '武威', 'Zhangye': '张掖', 'Pingliang': '平凉', 'Jiuquan': '酒泉', 'Qingyang': '庆阳', 'Dingxi': '定西', 'Longnan': '陇南',
   // 海南
-  'Haikou': '海口', 'Sanya': '三亚', 'Sansha': '三沙', 'Danzhou': '儋州', 'Qionghai': '琼海', 'Wanning': '万宁', 'Wenchang': '文昌',
+  'Haikou': '海口', 'Sanya': '三亚', 'Sansha': '三沙', 'Danzhou': '儋州',
   // 广西
   'Nanning': '南宁', 'Guilin': '桂林', 'Liuzhou': '柳州', 'Wuzhou': '梧州', 'Beihai': '北海', 'Fangchenggang': '防城港', 'Qinzhou': '钦州', 'Guigang': '贵港', 'Yulin': '玉林', 'Baise': '百色', 'Hezhou': '贺州', 'Hechi': '河池', 'Laibin': '来宾', 'Chongzuo': '崇左',
   // 内蒙古
-  'Hohhot': '呼和浩特', 'Baotou': '包头', 'Wuhai': '乌海', 'Chifeng': '赤峰', 'Tongliao': '通辽', 'Ordos': '鄂尔多斯', 'Hulunbuir': '呼伦贝尔', 'BayanNur': '巴彦淖尔', 'Ulanqab': '乌兰察布',
+  'Hohhot': '呼和浩特', 'Baotou': '包头', 'Wuhai': '乌海', 'Chifeng': '赤峰', 'Tongliao': '通辽', 'Ordos': '鄂尔多斯', 'Hulunbuir': '呼伦贝尔',
   // 新疆
-  'Urumqi': '乌鲁木齐', 'Karamay': '克拉玛依', 'Turpan': '吐鲁番', 'Hami': '哈密',
+  'Urumqi': '乌鲁木齐', 'Karamay': '克拉玛依',
   // 宁夏
-  'Yinchuan': '银川', 'Shizuishan': '石嘴山', 'Wuzhong': '吴忠', 'Guyuan': '固原', 'Zhongwei': '中卫', 'Qinghai': '西宁'
+  'Yinchuan': '银川', 'Shizuishan': '石嘴山', 'Wuzhong': '吴忠', 'Guyuan': '固原', 'Zhongwei': '中卫', 'Xining': '西宁'
 };
 
 // 判断解析结果的精细度得分
@@ -87,11 +90,11 @@ export function evaluatePrecision(locationStr) {
   return 0;
 }
 
-// 统一提取省市名称并处理拼音转中文
+// 深度清洗提取中文名称
 export function cleanAndExtractLocation(rawStr) {
   if (!rawStr) return null;
 
-  // 1. 优先提取国内中文“省+市”
+  // 1. 优先提取国内原生中文“省+市”
   for (let prov of PROVINCES) {
     if (rawStr.includes(prov)) {
       let match = rawStr.match(new RegExp(`${prov}(?:省)?([\\u4e00-\\u9fa5]+)`));
@@ -107,36 +110,49 @@ export function cleanAndExtractLocation(rawStr) {
     }
   }
 
-  // 2. 基础杂质清洗
+  // 2. 清洗多余杂质、英文括号说明及 City/District 等词汇
   let cleaned = rawStr
+    .replace(/\s*\([^)]*\)/g, '') // 过滤 (Xicheng District) 等括号内容
     .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房)/g, '')
     .replace(/^中国\s*/, '')
+    .replace(/City|Province|District/gi, '') // 去除英文后缀
     .trim();
 
-  // 3. 拼音自动转中文逻辑（针对 ShanxiYuncheng 等拼音情况）
+  // 3. 针对直辖市特殊规则（如 ShanghaiShanghai, BeijingBeijing 等）
+  for (let municipality of ['Beijing', 'Shanghai', 'Tianjin', 'Chongqing']) {
+    if (cleaned.toLowerCase().includes(municipality.toLowerCase())) {
+      return PINYIN_CITY_MAP[municipality];
+    }
+  }
+
+  // 4. 拼音省份 + 城市精准转换逻辑
   let pinyinProv = '';
   let pinyinCity = '';
 
   for (let pIn in PINYIN_PROVINCE_MAP) {
-    if (cleaned.startsWith(pIn)) {
+    if (cleaned.toLowerCase().startsWith(pIn.toLowerCase())) {
       pinyinProv = PINYIN_PROVINCE_MAP[pIn];
-      let restStr = cleaned.slice(pIn.length);
-      
+      let restStr = cleaned.slice(pIn.length).trim();
+
+      // 在剩余字符串中查找城市拼音
       for (let cIn in PINYIN_CITY_MAP) {
-        if (restStr.includes(cIn)) {
+        if (restStr.toLowerCase().includes(cIn.toLowerCase())) {
           pinyinCity = PINYIN_CITY_MAP[cIn];
           break;
         }
       }
-      if (!pinyinCity && restStr) {
-        pinyinCity = restStr.replace(/City|Province/gi, '').trim();
-      }
-      break;
-    }
-  }
 
-  if (pinyinProv) {
-    return `${pinyinProv}${pinyinCity}`;
+      // 如果是直辖市或者省份重名情况，直接返回省份
+      if (pinyinProv === pinyinCity) {
+        return pinyinProv;
+      }
+
+      if (pinyinCity) {
+        return `${pinyinProv}${pinyinCity}`;
+      }
+      
+      return pinyinProv;
+    }
   }
 
   return cleaned || null;
