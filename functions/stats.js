@@ -1,60 +1,4 @@
-// ==========================================
-// 1. 深度省市解析与精度打分引擎
-// ==========================================
-const PROVINCES = [
-  '陕西', '山西', '山东', '河南', '河北', '湖南', '湖北', '广东', '广西', 
-  '四川', '浙江', '江苏', '福建', '辽宁', '吉林', '黑龙江', '云南', '贵州', 
-  '甘肃', '青海', '内蒙古', '新疆', '西藏', '海南', '宁夏', '江西', '安徽', '台湾'
-];
-
-// 判断解析结果的“精细度得分”（得分越高越优先选择）
-function evaluatePrecision(locationStr) {
-  if (!locationStr || locationStr === '中国' || locationStr === '未知地区') return 0;
-  
-  // 匹配到具体“省+市/县”（如：陕西榆林、广东深圳）得最高分 3 分
-  for (let prov of PROVINCES) {
-    if (locationStr.includes(prov)) {
-      if (locationStr.length > prov.length) {
-        return 3; // 精准到地级市或县区
-      }
-      return 1; // 仅精准到省份
-    }
-  }
-
-  // 海外地区或直辖市（如：北京、东京、旧金山）得 2 分
-  if (locationStr.length >= 2) return 2;
-  return 0;
-}
-
-// 统一提取省市名称，去除“省”、“电信”、“机房”等杂质（优化：完整保留城市名，不截断）
-function cleanAndExtractLocation(rawStr) {
-  if (!rawStr) return null;
-
-  // 1. 优先提取国内“省+市”
-  for (let prov of PROVINCES) {
-    if (rawStr.includes(prov)) {
-      // 提取省份后的完整城市名称
-      let match = rawStr.match(new RegExp(`${prov}(?:省)?([\\u4e00-\\u9fa5]+)`));
-      if (match && match[1]) {
-        let cityName = match[1]
-          .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房)/g, '')
-          .trim();
-        if (cityName) {
-          return `${prov}${cityName}`;
-        }
-      }
-      return prov;
-    }
-  }
-
-  // 2. 基础杂质清洗
-  let cleaned = rawStr
-    .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房)/g, '')
-    .replace(/^中国\s*/, '')
-    .trim();
-
-  return cleaned || null;
-}
+import { PROVINCES, evaluatePrecision, cleanAndExtractLocation } from './geo.js';
 
 // 带超时控制的 Fetch 封装
 async function fetchWithTimeout(url, timeout = 1500) {
@@ -77,7 +21,7 @@ async function fetchWithTimeout(url, timeout = 1500) {
 // 2. 全球/国内外 API 深度对接节点
 // ==========================================
 
-// [国内接口 1] 百度 OpenData（国内地级市最精准）
+// [国内接口 1] 百度 OpenData（国内最精准，优先采用）
 async function apiBaidu(cleanIp) {
   const res = await fetchWithTimeout(`https://opendata.baidu.com/api.php?query=${encodeURIComponent(cleanIp)}&resource_id=6006&oe=utf8`);
   if (!res.ok) throw new Error('Baidu HTTP error');
@@ -88,7 +32,7 @@ async function apiBaidu(cleanIp) {
   throw new Error('Baidu parse failed');
 }
 
-// [国内接口 2] IP.SB / Pconline 线路（包含太平洋及国内节点）
+// [国内接口 2] IP.SB
 async function apiIpSb(cleanIp) {
   const res = await fetchWithTimeout(`https://api.ip.sb/geoip/${cleanIp}`);
   if (!res.ok) throw new Error('IP.SB HTTP error');
@@ -100,7 +44,7 @@ async function apiIpSb(cleanIp) {
   throw new Error('IP.SB parse failed');
 }
 
-// [国外/太平洋接口 1] IpWhois（覆盖全球、美洲、太平洋群岛及亚洲）
+// [国外接口 1] IpWhois
 async function apiIpWhois(cleanIp) {
   const res = await fetchWithTimeout(`https://ipwhois.app/json/${cleanIp}?lang=zh-CN`);
   if (!res.ok) throw new Error('IpWhois HTTP error');
@@ -114,7 +58,7 @@ async function apiIpWhois(cleanIp) {
   throw new Error('IpWhois parse failed');
 }
 
-// [国外/太平洋接口 2] IpApi（全球分布式高可用）
+// [国外接口 2] IpApi
 async function apiIpApi(cleanIp) {
   const res = await fetchWithTimeout(`http://ip-api.com/json/${cleanIp}?fields=status,countryCode,regionName,city&lang=zh-CN`);
   if (!res.ok) throw new Error('IpApi HTTP error');
@@ -127,11 +71,11 @@ async function apiIpApi(cleanIp) {
   throw new Error('IpApi parse failed');
 }
 
-// 内存缓存字典，避免对相同 IP 重复发起并发查询
+// 内存缓存字典
 const globalIpCache = new Map();
 
 // ==========================================
-// 3. 多源并行竞速 + 精度筛选调度器
+// 3. 智能权重调度器（已修复强行打断 Bug）
 // ==========================================
 async function resolveBestGlobalGeo(ip) {
   if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1') {
@@ -147,7 +91,7 @@ async function resolveBestGlobalGeo(ip) {
     return globalIpCache.get(cleanIp);
   }
 
-  // 同时（并发）对国内、国外、太平洋等全网所有 API 发起请求
+  // 数组第 0 位为百度（国内最准节点）
   const promises = [
     apiBaidu(cleanIp),
     apiIpSb(cleanIp),
@@ -156,18 +100,19 @@ async function resolveBestGlobalGeo(ip) {
   ];
 
   try {
-    // 使用 Promise.allSettled 等待所有接口在 1.5 秒内返回，并挑选精度最高的结果
     const results = await Promise.allSettled(promises);
-    let bestResult = null;
+    
+    // 规则 1：优先信任百度 OpenData。只要百度返回成功且解析出有效的省/市，直接采用
+    if (results[0].status === 'fulfilled' && results[0].value && results[0].value.score > 0) {
+      const finalData = { country: results[0].value.country, city: results[0].value.city };
+      globalIpCache.set(cleanIp, finalData);
+      return finalData;
+    }
 
+    // 规则 2：若百度超时/失败，择优挑选得分最高且响应最靠前的 API 结果（不再用 break 中断）
+    let bestResult = null;
     for (const res of results) {
       if (res.status === 'fulfilled' && res.value) {
-        // 如果匹配到了满分结果（如：“陕西榆林”），直接采用并打断
-        if (res.value.score === 3) {
-          bestResult = res.value;
-          break;
-        }
-        // 否则择优保留分数最高的结果
         if (!bestResult || res.value.score > bestResult.score) {
           bestResult = res.value;
         }
@@ -225,7 +170,7 @@ export async function onRequestGet(context) {
       return await Promise.all(rows.map(async (row) => {
         const realIp = row.ip || 'Unknown';
         
-        // 调用国内外全网竞速定位函数
+        // 调用优化后的定位逻辑
         const geo = await resolveBestGlobalGeo(realIp);
 
         return {
@@ -561,7 +506,7 @@ export async function onRequestGet(context) {
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问地区排行榜 (点击展开明细)
-              <span class="sub-tip">🌐 全球多源（国内外+太平洋节点）并发竞速高精度解析</span>
+              <span class="sub-tip">🌐 全球多源并发竞速 + 百度高精优先识别</span>
             </h2>
             <div class="table-responsive">
               <table>
