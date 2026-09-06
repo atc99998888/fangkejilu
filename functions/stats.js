@@ -1,26 +1,26 @@
-// 内存缓存，避免频繁请求同一个 IP 触发限流或降低性能
+// 内存缓存，避免重复查询同一个 IP
 const ipCache = new Map();
 
-// 辅助函数：通过 ip.sb 免费高精度接口获取 IP 位置
+// 辅助函数：通过国内高精准免费接口获取 IP 位置
 async function fetchAccurateGeo(ip) {
-  // 过滤无效或本地 IP
+  // 过滤无效或局域网 IP
   if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.')) {
     return null;
   }
 
-  // 1. 优先读取缓存
+  // 1. 读取缓存
   if (ipCache.has(ip)) {
     return ipCache.get(ip);
   }
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 秒超时保护
+    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 秒超时
 
-    // 请求 api.ip.sb 接口
-    const res = await fetch(`https://api.ip.sb/geoip/${ip}`, {
-      headers: { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' 
+    // 使用太平洋电脑网国内高精度 IP 接口 (GBK/UTF-8 自动处理)
+    const res = await fetch(`http://whois.pconline.com.cn/ipJson.jsp?ip=${ip}&json=true`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       },
       signal: controller.signal
     });
@@ -28,23 +28,41 @@ async function fetchAccurateGeo(ip) {
 
     if (res.ok) {
       const data = await res.json();
-      
-      // 提取解析出的数据
-      const country = data.country_code || 'CN';
-      // 优先使用 city，若 city 为空或 Unknown，则使用 region (省份)
-      let city = 'Unknown';
-      if (data.city && data.city !== 'Unknown') {
-        city = data.city;
-      } else if (data.region && data.region !== 'Unknown') {
-        city = data.region;
+      // data.pro 为省份, data.city 为城市
+      let cityName = 'Unknown';
+      if (data.city && data.city.trim() !== '') {
+        cityName = data.city.trim();
+      } else if (data.pro && data.pro.trim() !== '') {
+        cityName = data.pro.trim();
       }
 
-      const result = { country, city };
-      ipCache.set(ip, result);
-      return result;
+      if (cityName !== 'Unknown') {
+        const result = {
+          country: 'CN',
+          city: cityName
+        };
+        ipCache.set(ip, result);
+        return result;
+      }
     }
   } catch (e) {
-    console.error(`[IP.SB] 解析 IP (${ip}) 超时或失败:`, e.message);
+    // 降级备用接口：IP.SB
+    try {
+      const res2 = await fetch(`https://api.ip.sb/geoip/${ip}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0' }
+      });
+      if (res2.ok) {
+        const data2 = await res2.json();
+        const result2 = {
+          country: data2.country_code || 'CN',
+          city: data2.city || data2.region || 'Unknown'
+        };
+        ipCache.set(ip, result2);
+        return result2;
+      }
+    } catch (err) {
+      console.error(`IP 解析失败 (${ip}):`, err.message);
+    }
   }
 
   return null;
@@ -92,7 +110,7 @@ export async function onRequestGet(context) {
         let country = row.country || row.country_code || 'Unknown';
         let city = row.city || 'Unknown';
 
-        // 调用 ip.sb 进行二次精度修正
+        // 优先调用国内高精度 API 校准 IP 城市
         if (ip !== 'Unknown') {
           const accurateGeo = await fetchAccurateGeo(ip);
           if (accurateGeo) {
@@ -446,7 +464,7 @@ export async function onRequestGet(context) {
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问城市排行榜 (点击展开明细)
-              <span class="sub-tip">⏱️ 基于 ip.sb 高精度引擎接口</span>
+              <span class="sub-tip">⏱️ 国内高精度 IP 库驱动</span>
             </h2>
             <div style="overflow-x: auto;">
               <table>
@@ -656,26 +674,5 @@ function translateCountry(code) {
 
 function translateCity(city) {
   if (!city || city === 'Unknown') return '未知城市';
-
-  const cityMap = {
-    'Shanxi': '山西', 'Shaanxi': '陕西', 'Sichuan': '四川', 'Guangdong': '广东',
-    'Zhejiang': '浙江', 'Jiangsu': '江苏', 'Shandong': '山东', 'Henan': '河南',
-    'Hubei': '湖北', 'Hunan': '湖南', 'Fujian': '福建', 'Anhui': '安徽',
-    'Hebei': '河北', 'Liaoning': '辽宁', 'Jilin': '吉林', 'Heilongjiang': '黑龙江',
-    'Jiangxi': '江西', 'Gansu': '甘肃', 'Qinghai': '青海', 'Guangxi': '广西',
-    'Yunnan': '云南', 'Guizhou': '贵州', 'Hainan': '海南', 'Inner Mongolia': '内蒙古',
-    'Xinjiang': '新疆', 'Tibet': '西藏', 'Ningxia': '宁夏',
-
-    'Beijing': '北京', 'Shanghai': '上海', 'Tianjin': '天津', 'Chongqing': '重庆',
-    'Hong Kong': '香港', 'Macau': '澳门', 'Taipei': '台北', 'Guangzhou': '广州',
-    'Shenzhen': '深圳', 'Hangzhou': '杭州', 'Nanjing': '南京', 'Chengdu': '成都',
-    'Wuhan': '武汉', 'Xi\'an': '西安', 'Xian': '西安', 'Zhengzhou': '郑州',
-    'Changsha': '长沙', 'Jinan': '济南', 'Qingdao': '青岛', 'Suzhou': '苏州',
-    'Ningbo': '宁波', 'Wenzhou': '温州', 'Fuzhou': '福州', 'Xiamen': '厦门',
-    'Hefei': '合肥', 'Harbin': '哈尔滨', 'Shenyang': '沈阳', 'Dalian': '大连',
-    'Shijiazhuang': '石家庄', 'Taiyuan': '太原', 'Nanchang': '南昌', 'Nanning': '南宁',
-    'Kunming': '昆明', 'Guiyang': '贵阳', 'Lanzhou': '兰州', 'Urumqi': '乌鲁木齐'
-  };
-
-  return cityMap[city] || city;
+  return city;
 }
