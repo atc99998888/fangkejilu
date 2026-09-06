@@ -1,87 +1,193 @@
-import { PROVINCES, evaluatePrecision, cleanAndExtractLocation } from './geo.js';
-
 // ==========================================
-// 1. 辅助函数模块
+// 1. 深度省市解析与精度打分引擎
 // ==========================================
+const PROVINCES = [
+  '陕西', '山西', '山东', '河南', '河北', '湖南', '湖北', '广东', '广西', 
+  '四川', '浙江', '江苏', '福建', '辽宁', '吉林', '黑龙江', '云南', '贵州', 
+  '甘肃', '青海', '内蒙古', '新疆', '西藏', '海南', '宁夏', '江西', '安徽', '台湾'
+];
 
-function decodePunycodePart(input) {
-  const BASE = 36, TMIN = 1, TMAX = 26, SKEW = 38, DAMP = 700, INITIAL_BIAS = 72, INITIAL_N = 128;
-  function adapt(delta, numPoints, firstTime) {
-    delta = firstTime ? Math.floor(delta / DAMP) : delta >> 1;
-    delta += Math.floor(delta / numPoints);
-    let k = 0;
-    while (delta > ((BASE - TMIN) * TMAX) / 2) {
-      delta = Math.floor(delta / (BASE - TMIN));
-      k += BASE;
+// 判断解析结果的“精细度得分”（得分越高越优先选择）
+function evaluatePrecision(locationStr) {
+  if (!locationStr || locationStr === '中国' || locationStr === '未知地区') return 0;
+  
+  // 匹配到具体“省+市/县”（如：陕西榆林、广东深圳）得最高分 3 分
+  for (let prov of PROVINCES) {
+    if (locationStr.includes(prov)) {
+      if (locationStr.length > prov.length) {
+        return 3; // 精准到地级市或县区
+      }
+      return 1; // 仅精准到省份
     }
-    return Math.floor(k + ((BASE - TMIN + 1) * delta) / (delta + SKEW));
   }
 
-  let output = [];
-  let basicIdx = input.lastIndexOf('-');
-  if (basicIdx > 0) {
-    for (let j = 0; j < basicIdx; ++j) {
-      output.push(input.charCodeAt(j));
+  // 海外地区或直辖市（如：北京、东京、旧金山）得 2 分
+  if (locationStr.length >= 2) return 2;
+  return 0;
+}
+
+// 统一提取省市名称，去除“省”、“电信”、“机房”等杂质（优化：完整保留城市名，不截断）
+function cleanAndExtractLocation(rawStr) {
+  if (!rawStr) return null;
+
+  // 1. 优先提取国内“省+市”
+  for (let prov of PROVINCES) {
+    if (rawStr.includes(prov)) {
+      // 提取省份后的完整城市名称
+      let match = rawStr.match(new RegExp(`${prov}(?:省)?([\\u4e00-\\u9fa5]+)`));
+      if (match && match[1]) {
+        let cityName = match[1]
+          .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房)/g, '')
+          .trim();
+        if (cityName) {
+          return `${prov}${cityName}`;
+        }
+      }
+      return prov;
     }
-    input = input.slice(basicIdx + 1);
   }
 
-  let n = INITIAL_N, i = 0, bias = INITIAL_BIAS;
-  let inIdx = 0;
-  while (inIdx < input.length) {
-    let oldI = i, w = 1, k = BASE;
-    while (true) {
-      if (inIdx >= input.length) return input;
-      let code = input.charCodeAt(inIdx++);
-      let digit = code - 48 < 10 ? code - 22 : code - 65 < 26 ? code - 65 : code - 97 < 26 ? code - 97 : BASE;
-      i += digit * w;
-      let t = k <= bias ? TMIN : k >= bias + TMAX ? TMAX : k - bias;
-      if (digit < t) break;
-      w *= BASE - t;
-      k += BASE;
-    }
-    bias = adapt(i - oldI, output.length + 1, oldI === 0);
-    n += Math.floor(i / (output.length + 1));
-    i %= output.length + 1;
-    output.splice(i++, 0, n);
-  }
-  return String.fromCodePoint(...output);
+  // 2. 基础杂质清洗
+  let cleaned = rawStr
+    .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房)/g, '')
+    .replace(/^中国\s*/, '')
+    .trim();
+
+  return cleaned || null;
 }
 
-function punycodeToUnicode(domain) {
-  if (!domain) return '';
-  return domain.split('.').map(part => {
-    return part.startsWith('xn--') ? decodePunycodePart(part.slice(4)) : part;
-  }).join('.');
-}
-
-function escapeHtml(str) {
-  return String(str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function formatDate(utcString) {
-  if (!utcString) return '未知时间';
+// 带超时控制的 Fetch 封装
+async function fetchWithTimeout(url, timeout = 1500) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
   try {
-    const date = new Date(utcString + " UTC");
-    if (isNaN(date.getTime())) return utcString;
-    return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+    const response = await fetch(url, { 
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+    });
+    clearTimeout(id);
+    return response;
   } catch (e) {
-    return utcString;
+    clearTimeout(id);
+    throw e;
   }
 }
 
-function translateCountry(code) {
-  const countryMap = {
-    'CN': '🇨🇳 中国', 'HK': '🇭🇰 中国香港', 'MO': '🇲🇴 中国澳门', 'TW': '🇹🇼 中国台湾',
-    'US': '🇺🇸 美国', 'JP': '🇯🇵 日本', 'KR': '🇰🇷 韩国', 'SG': '🇸🇬 新加坡',
-    'GB': '🇬🇧 英国', 'DE': '🇩🇪 德国', 'CA': '🇨🇦 加拿大', 'AU': '🇦🇺 澳大利亚',
-    'RU': '🇷🇺 俄罗斯', 'Unknown': '未知国家'
-  };
-  return countryMap[code] || code || '未知国家';
+// ==========================================
+// 2. 全球/国内外 API 深度对接节点
+// ==========================================
+
+// [国内接口 1] 百度 OpenData（国内地级市最精准）
+async function apiBaidu(cleanIp) {
+  const res = await fetchWithTimeout(`https://opendata.baidu.com/api.php?query=${encodeURIComponent(cleanIp)}&resource_id=6006&oe=utf8`);
+  if (!res.ok) throw new Error('Baidu HTTP error');
+  const data = await res.json();
+  const loc = data?.data?.[0]?.location;
+  const parsed = cleanAndExtractLocation(loc);
+  if (parsed) return { country: 'CN', city: parsed, score: evaluatePrecision(parsed) };
+  throw new Error('Baidu parse failed');
+}
+
+// [国内接口 2] IP.SB / Pconline 线路（包含太平洋及国内节点）
+async function apiIpSb(cleanIp) {
+  const res = await fetchWithTimeout(`https://api.ip.sb/geoip/${cleanIp}`);
+  if (!res.ok) throw new Error('IP.SB HTTP error');
+  const data = await res.json();
+  const region = data.region || '';
+  const city = data.city || '';
+  const parsed = cleanAndExtractLocation(`${region}${city}`);
+  if (parsed) return { country: data.country_code || 'CN', city: parsed, score: evaluatePrecision(parsed) };
+  throw new Error('IP.SB parse failed');
+}
+
+// [国外/太平洋接口 1] IpWhois（覆盖全球、美洲、太平洋群岛及亚洲）
+async function apiIpWhois(cleanIp) {
+  const res = await fetchWithTimeout(`https://ipwhois.app/json/${cleanIp}?lang=zh-CN`);
+  if (!res.ok) throw new Error('IpWhois HTTP error');
+  const data = await res.json();
+  if (data && data.success) {
+    const region = data.region || '';
+    const city = data.city || '';
+    const parsed = cleanAndExtractLocation(`${region}${city}`);
+    if (parsed) return { country: data.country_code || 'CN', city: parsed, score: evaluatePrecision(parsed) };
+  }
+  throw new Error('IpWhois parse failed');
+}
+
+// [国外/太平洋接口 2] IpApi（全球分布式高可用）
+async function apiIpApi(cleanIp) {
+  const res = await fetchWithTimeout(`http://ip-api.com/json/${cleanIp}?fields=status,countryCode,regionName,city&lang=zh-CN`);
+  if (!res.ok) throw new Error('IpApi HTTP error');
+  const data = await res.json();
+  if (data && data.status === 'success') {
+    const rawCity = data.city || data.regionName || '';
+    const parsed = cleanAndExtractLocation(rawCity);
+    if (parsed) return { country: data.countryCode || 'CN', city: parsed, score: evaluatePrecision(parsed) };
+  }
+  throw new Error('IpApi parse failed');
+}
+
+// 内存缓存字典，避免对相同 IP 重复发起并发查询
+const globalIpCache = new Map();
+
+// ==========================================
+// 3. 多源并行竞速 + 精度筛选调度器
+// ==========================================
+async function resolveBestGlobalGeo(ip) {
+  if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1') {
+    return { country: 'CN', city: '局域网/本地' };
+  }
+
+  let cleanIp = ip.split(',')[0].split('/')[0].trim();
+  if (cleanIp.startsWith('192.168.') || cleanIp.startsWith('10.') || cleanIp.startsWith('172.16.')) {
+    return { country: 'CN', city: '局域网/本地' };
+  }
+
+  if (globalIpCache.has(cleanIp)) {
+    return globalIpCache.get(cleanIp);
+  }
+
+  // 同时（并发）对国内、国外、太平洋等全网所有 API 发起请求
+  const promises = [
+    apiBaidu(cleanIp),
+    apiIpSb(cleanIp),
+    apiIpWhois(cleanIp),
+    apiIpApi(cleanIp)
+  ];
+
+  try {
+    // 使用 Promise.allSettled 等待所有接口在 1.5 秒内返回，并挑选精度最高的结果
+    const results = await Promise.allSettled(promises);
+    let bestResult = null;
+
+    for (const res of results) {
+      if (res.status === 'fulfilled' && res.value) {
+        // 如果匹配到了满分结果（如：“陕西榆林”），直接采用并打断
+        if (res.value.score === 3) {
+          bestResult = res.value;
+          break;
+        }
+        // 否则择优保留分数最高的结果
+        if (!bestResult || res.value.score > bestResult.score) {
+          bestResult = res.value;
+        }
+      }
+    }
+
+    if (bestResult && bestResult.city) {
+      const finalData = { country: bestResult.country, city: bestResult.city };
+      globalIpCache.set(cleanIp, finalData);
+      return finalData;
+    }
+  } catch (e) {
+    console.error("并发竞速解析异常:", e);
+  }
+
+  return { country: 'CN', city: '中国' };
 }
 
 // ==========================================
-// 2. Cloudflare Pages 业务主入口
+// 4. Cloudflare Pages 业务主入口
 // ==========================================
 export async function onRequestGet(context) {
   const { request, env } = context;
@@ -112,27 +218,26 @@ export async function onRequestGet(context) {
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
-    // 同步清洗数据库提取的数据（无须网络延迟，直接用 geo.js 转换为标准中文）
-    const processDetails = (rows) => {
+    // 批量并发处理 IP 定位
+    const processDetails = async (rows) => {
       if (!rows || rows.length === 0) return [];
       
-      return rows.map((row) => {
+      return await Promise.all(rows.map(async (row) => {
         const realIp = row.ip || 'Unknown';
-        const rawCity = row.city || '';
         
-        // 核心点：利用 geo.js 对数据库存量的拼音/英文进行强行清洗转换
-        const cleanCity = cleanAndExtractLocation(rawCity) || rawCity || '未知地区';
+        // 调用国内外全网竞速定位函数
+        const geo = await resolveBestGlobalGeo(realIp);
 
         return {
           ...row,
           ip: realIp,
-          country: row.country || 'CN',
-          city: cleanCity,
+          country: geo.country,
+          city: geo.city,
           displayIp: escapeHtml(realIp),
-          displayCountry: translateCountry(row.country || 'CN'),
-          displayCity: cleanCity
+          displayCountry: translateCountry(geo.country),
+          displayCity: geo.city
         };
-      });
+      }));
     };
 
     const todayDetailsRaw = await env.DB.prepare(`
@@ -141,7 +246,7 @@ export async function onRequestGet(context) {
       WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
       ORDER BY id DESC
     `).all();
-    const todayDetails = processDetails(todayDetailsRaw?.results);
+    const todayDetails = await processDetails(todayDetailsRaw?.results);
 
     const yesterdayDetailsRaw = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
@@ -149,7 +254,7 @@ export async function onRequestGet(context) {
       WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
       ORDER BY id DESC
     `).all();
-    const yesterdayDetails = processDetails(yesterdayDetailsRaw?.results);
+    const yesterdayDetails = await processDetails(yesterdayDetailsRaw?.results);
 
     const last7DaysRes = await env.DB.prepare(`
       SELECT DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) as date, COUNT(*) as count 
@@ -456,6 +561,7 @@ export async function onRequestGet(context) {
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问地区排行榜 (点击展开明细)
+              <span class="sub-tip">🌐 全球多源（国内外+太平洋节点）并发竞速高精度解析</span>
             </h2>
             <div class="table-responsive">
               <table>
@@ -585,4 +691,80 @@ export async function onRequestGet(context) {
       headers: { "Content-Type": "text/plain; charset=utf-8" }
     });
   }
+}
+
+function decodePunycodePart(input) {
+  const BASE = 36, TMIN = 1, TMAX = 26, SKEW = 38, DAMP = 700, INITIAL_BIAS = 72, INITIAL_N = 128;
+  function adapt(delta, numPoints, firstTime) {
+    delta = firstTime ? Math.floor(delta / DAMP) : delta >> 1;
+    delta += Math.floor(delta / numPoints);
+    let k = 0;
+    while (delta > ((BASE - TMIN) * TMAX) / 2) {
+      delta = Math.floor(delta / (BASE - TMIN));
+      k += BASE;
+    }
+    return Math.floor(k + ((BASE - TMIN + 1) * delta) / (delta + SKEW));
+  }
+
+  let output = [];
+  let basicIdx = input.lastIndexOf('-');
+  if (basicIdx > 0) {
+    for (let j = 0; j < basicIdx; ++j) {
+      output.push(input.charCodeAt(j));
+    }
+    input = input.slice(basicIdx + 1);
+  }
+
+  let n = INITIAL_N, i = 0, bias = INITIAL_BIAS;
+  let inIdx = 0;
+  while (inIdx < input.length) {
+    let oldI = i, w = 1, k = BASE;
+    while (true) {
+      if (inIdx >= input.length) return input;
+      let code = input.charCodeAt(inIdx++);
+      let digit = code - 48 < 10 ? code - 22 : code - 65 < 26 ? code - 65 : code - 97 < 26 ? code - 97 : BASE;
+      i += digit * w;
+      let t = k <= bias ? TMIN : k >= bias + TMAX ? TMAX : k - bias;
+      if (digit < t) break;
+      w *= BASE - t;
+      k += BASE;
+    }
+    bias = adapt(i - oldI, output.length + 1, oldI === 0);
+    n += Math.floor(i / (output.length + 1));
+    i %= output.length + 1;
+    output.splice(i++, 0, n);
+  }
+  return String.fromCodePoint(...output);
+}
+
+function punycodeToUnicode(domain) {
+  if (!domain) return '';
+  return domain.split('.').map(part => {
+    return part.startsWith('xn--') ? decodePunycodePart(part.slice(4)) : part;
+  }).join('.');
+}
+
+function escapeHtml(str) {
+  return String(str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function formatDate(utcString) {
+  if (!utcString) return '未知时间';
+  try {
+    const date = new Date(utcString + " UTC");
+    if (isNaN(date.getTime())) return utcString;
+    return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+  } catch (e) {
+    return utcString;
+  }
+}
+
+function translateCountry(code) {
+  const countryMap = {
+    'CN': '🇨🇳 中国', 'HK': '🇭🇰 中国香港', 'MO': '🇲🇴 中国澳门', 'TW': '🇹🇼 中国台湾',
+    'US': '🇺🇸 美国', 'JP': '🇯🇵 日本', 'KR': '🇰🇷 韩国', 'SG': '🇸🇬 新加坡',
+    'GB': '🇬🇧 英国', 'DE': '🇩🇪 德国', 'CA': '🇨🇦 加拿大', 'AU': '🇦🇺 澳大利亚',
+    'RU': '🇷🇺 俄罗斯', 'Unknown': '未知国家'
+  };
+  return countryMap[code] || code || '未知国家';
 }
