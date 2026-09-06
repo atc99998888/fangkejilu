@@ -1,11 +1,35 @@
-// 内存缓存，避免重复查询同一个 IP
+// 内存缓存，避免频繁请求同一个 IP
 const ipCache = new Map();
 
-// 辅助函数：通过国内高精准免费接口获取 IP 位置
+// 辅助函数：将英文省市转换为标准中文
+function formatToChineseCity(rawCity) {
+  if (!rawCity || rawCity === 'Unknown' || rawCity === '局域网') return '未知城市';
+  
+  const cityMap = {
+    'Beijing': '北京', 'Shanghai': '上海', 'Tianjin': '天津', 'Chongqing': '重庆',
+    'Guangdong': '广东', 'Guangzhou': '广州', 'Shenzhen': '深圳', 'Zhejiang': '浙江',
+    'Hangzhou': '杭州', 'Jiangsu': '江苏', 'Nanjing': '南京', 'Suzhou': '苏州',
+    'Sichuan': '四川', 'Chengdu': '成都', 'Hubei': '湖北', 'Wuhan': '武汉',
+    'Henan': '河南', 'Zhengzhou': '郑州', 'Shandong': '山东', 'Qingdao': '青岛',
+    'Jinan': '济南', 'Fujian': '福建', 'Xiamen': '厦门', 'Fuzhou': '福州',
+    'Hunan': '湖南', 'Changsha': '长沙', 'Shaanxi': '陕西', 'Xi\'an': '西安',
+    'Anhui': '安徽', 'Hefei': '合肥', 'Jiangxi': '江西', 'Nanchang': '南昌',
+    'Hebei': '河北', 'Shijiazhuang': '石家庄', 'Liaoning': '辽宁', 'Shenyang': '沈阳',
+    'Dalian': '大连', 'Heilongjiang': '黑龙江', 'Harbin': '哈尔滨', 'Jilin': '吉林',
+    'Yunnan': '云南', 'Kunming': '昆明', 'Guangxi': '广西', 'Nanning': '南宁',
+    'Guizhou': '贵州', 'Guiyang': '贵阳', 'Shanxi': '山西', 'Taiyuan': '太原',
+    'Inner Mongolia': '内蒙古', 'Hainan': '海南', 'Gansu': '甘肃', 'Qinghai': '青海',
+    'Ningxia': '宁夏', 'Xinjiang': '新疆', 'Tibet': '西藏', 'Hong Kong': '香港',
+    'Macau': '澳门', 'Taipei': '台北'
+  };
+
+  return cityMap[rawCity] || rawCity;
+}
+
+// 高精度 IP 解析函数（高德 API + 双重降级）
 async function fetchAccurateGeo(ip) {
-  // 过滤无效或局域网 IP
   if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.')) {
-    return null;
+    return { country: 'CN', city: '局域网/本地' };
   }
 
   // 1. 读取缓存
@@ -13,32 +37,54 @@ async function fetchAccurateGeo(ip) {
     return ipCache.get(ip);
   }
 
+  // === 方案 A：高德开放平台 API（首选，国内最准） ===
+  const AMAP_KEY = "你的高德Web服务Key"; // 👈 在这里填入高德 API Key
+  if (AMAP_KEY && AMAP_KEY !== "你的高德Web服务Key") {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+      const res = await fetch(`https://restapi.amap.com/v3/ip?ip=${ip}&key=${AMAP_KEY}`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.status === '1') {
+          let cityName = '未知城市';
+          if (data.city && typeof data.city === 'string' && data.city.length > 0) {
+            cityName = data.city;
+          } else if (data.province && typeof data.province === 'string' && data.province.length > 0) {
+            cityName = data.province;
+          }
+
+          if (cityName !== '未知城市') {
+            const result = { country: 'CN', city: cityName };
+            ipCache.set(ip, result);
+            return result;
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`高德 IP 解析失败 (${ip}):`, e.message);
+    }
+  }
+
+  // === 方案 B：IP-API 免费中文接口（备用降级） ===
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 秒超时
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
 
-    // 使用太平洋电脑网国内高精度 IP 接口 (GBK/UTF-8 自动处理)
-    const res = await fetch(`http://whois.pconline.com.cn/ipJson.jsp?ip=${ip}&json=true`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      },
-      signal: controller.signal
-    });
+    const res = await fetch(`http://ip-api.com/json/${ip}?lang=zh-CN`, { signal: controller.signal });
     clearTimeout(timeoutId);
 
     if (res.ok) {
       const data = await res.json();
-      // data.pro 为省份, data.city 为城市
-      let cityName = 'Unknown';
-      if (data.city && data.city.trim() !== '') {
-        cityName = data.city.trim();
-      } else if (data.pro && data.pro.trim() !== '') {
-        cityName = data.pro.trim();
-      }
+      if (data.status === 'success') {
+        let cityName = data.city || data.regionName || '未知城市';
+        cityName = formatToChineseCity(cityName);
 
-      if (cityName !== 'Unknown') {
         const result = {
-          country: 'CN',
+          country: data.countryCode || 'CN',
           city: cityName
         };
         ipCache.set(ip, result);
@@ -46,26 +92,10 @@ async function fetchAccurateGeo(ip) {
       }
     }
   } catch (e) {
-    // 降级备用接口：IP.SB
-    try {
-      const res2 = await fetch(`https://api.ip.sb/geoip/${ip}`, {
-        headers: { 'User-Agent': 'Mozilla/5.0' }
-      });
-      if (res2.ok) {
-        const data2 = await res2.json();
-        const result2 = {
-          country: data2.country_code || 'CN',
-          city: data2.city || data2.region || 'Unknown'
-        };
-        ipCache.set(ip, result2);
-        return result2;
-      }
-    } catch (err) {
-      console.error(`IP 解析失败 (${ip}):`, err.message);
-    }
+    console.error(`IP-API 解析失败 (${ip}):`, e.message);
   }
 
-  return null;
+  return { country: 'CN', city: '未知城市' };
 }
 
 export async function onRequestGet(context) {
@@ -107,10 +137,10 @@ export async function onRequestGet(context) {
       
       return await Promise.all(rows.map(async (row) => {
         const ip = row.ip || row.client_ip || 'Unknown';
-        let country = row.country || row.country_code || 'Unknown';
-        let city = row.city || 'Unknown';
+        let country = row.country || row.country_code || 'CN';
+        let city = '未知城市';
 
-        // 优先调用国内高精度 API 校准 IP 城市
+        // 重新进行 IP 高精度城市解析
         if (ip !== 'Unknown') {
           const accurateGeo = await fetchAccurateGeo(ip);
           if (accurateGeo) {
@@ -126,7 +156,7 @@ export async function onRequestGet(context) {
           city: city,
           displayIp: escapeHtml(ip),
           displayCountry: translateCountry(country),
-          displayCity: translateCity(city)
+          displayCity: formatToChineseCity(city)
         };
       }));
     };
@@ -192,12 +222,12 @@ export async function onRequestGet(context) {
       yesterdayDomainMap[item.domain] = item.domain_total;
     });
 
-    // 5. 城市排行榜聚合
+    // 5. 城市排行榜聚合（以中文城市名精准合并）
     const cityRankMap = {};
     todayDetails.forEach(item => {
-      const key = `${item.country}_${item.city}`;
+      const key = `${item.country}_${item.displayCity}`;
       if (!cityRankMap[key]) {
-        cityRankMap[key] = { country: item.country, city: item.city, city_total: 0 };
+        cityRankMap[key] = { country: item.country, city: item.displayCity, city_total: 0 };
       }
       cityRankMap[key].city_total += 1;
     });
@@ -206,7 +236,7 @@ export async function onRequestGet(context) {
 
     const yesterdayCityMap = {};
     yesterdayDetails.forEach(item => {
-      const key = `${item.country}_${item.city}`;
+      const key = `${item.country}_${item.displayCity}`;
       yesterdayCityMap[key] = (yesterdayCityMap[key] || 0) + 1;
     });
 
@@ -236,7 +266,7 @@ export async function onRequestGet(context) {
       if (!domainDetailsMap[item.domain]) domainDetailsMap[item.domain] = [];
       domainDetailsMap[item.domain].push(item);
 
-      const cityKey = `${item.country}_${item.city}`;
+      const cityKey = `${item.country}_${item.displayCity}`;
       if (!cityDetailsMap[cityKey]) cityDetailsMap[cityKey] = [];
       cityDetailsMap[cityKey].push(item);
     });
@@ -299,14 +329,14 @@ export async function onRequestGet(context) {
         <tr class="clickable-row" onclick="toggleElement('city-detail-${index}', 'city-icon-${index}')">
           <td style="text-align: center;"><span class="rank-badge rank-${index + 1}">${index + 1}</span></td>
           <td>${translateCountry(item.country)}</td>
-          <td><strong>${translateCity(item.city)}</strong> <span class="arrow-icon" id="city-icon-${index}">▼</span></td>
+          <td><strong>${item.city}</strong> <span class="arrow-icon" id="city-icon-${index}">▼</span></td>
           <td><span class="pv-count">${item.city_total} 次</span></td>
           <td><span class="pv-yesterday">${yesterdayCount} 次</span></td>
         </tr>
         <tr id="city-detail-${index}" class="detail-row" style="display: none;">
           <td colspan="5" class="detail-cell">
             <div class="inner-table-wrapper">
-              <div class="inner-title">🏙️ 城市 <strong>${translateCity(item.city)}</strong> 今日来源域名与时间明细：</div>
+              <div class="inner-title">🏙️ 城市 <strong>${item.city}</strong> 今日来源域名与时间明细：</div>
               <table>
                 <thead>
                   <tr><th>访问时间 (北京时间)</th><th>被访问域名</th><th>访客 IP</th></tr>
@@ -464,7 +494,7 @@ export async function onRequestGet(context) {
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问城市排行榜 (点击展开明细)
-              <span class="sub-tip">⏱️ 国内高精度 IP 库驱动</span>
+              <span class="sub-tip">⏱️ 自动校准与全中文解析</span>
             </h2>
             <div style="overflow-x: auto;">
               <table>
@@ -670,9 +700,4 @@ function translateCountry(code) {
     'RU': '🇷🇺 俄罗斯', 'Unknown': '未知国家'
   };
   return countryMap[code] || code || '未知国家';
-}
-
-function translateCity(city) {
-  if (!city || city === 'Unknown') return '未知城市';
-  return city;
 }
