@@ -1,7 +1,7 @@
-// 内存缓存，避免频繁重复请求 ip138
+// 内存缓存，避免频繁重复请求外部 API
 const ipCache = new Map();
 
-// 辅助函数：将 GBK Buffer 转为 UTF-8 字符串（ip138 页面为 GBK 编码）
+// 辅助函数：将 GBK Buffer 转为 UTF-8 字符串（太平洋电脑网接口返回 GBK 编码）
 function decodeGBK(buffer) {
   try {
     const decoder = new TextDecoder('gbk');
@@ -12,28 +12,31 @@ function decodeGBK(buffer) {
   }
 }
 
-// 核心函数：实时抓取 ip138 并解析完整的【省 + 市 + 运营商】
-async function fetchFromIP138(ip) {
-  // 过滤无效或局域网 IP
-  if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.')) {
+// 核心函数：免 Key 高精度 IP 解析（太平洋电脑网 + IP-API 备用）
+async function fetchAccurateGeo(ip) {
+  if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1') {
+    return { country: 'CN', city: '局域网/本地' };
+  }
+
+  // 清洗 IP，防止带有掩码或空格（例如 "114.114.114.114/24" -> "114.114.114.114"）
+  let cleanIp = ip.split('/')[0].trim();
+  if (cleanIp.startsWith('192.168.') || cleanIp.startsWith('10.')) {
     return { country: 'CN', city: '局域网/本地' };
   }
 
   // 1. 读取缓存
-  if (ipCache.has(ip)) {
-    return ipCache.get(ip);
+  if (ipCache.has(cleanIp)) {
+    return ipCache.get(cleanIp);
   }
 
+  // === 方案 A：太平洋电脑网免 Key 公共接口（国内极速、含省市和运营商） ===
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500); // 3.5 秒超时
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
 
-    // 模拟真实浏览器访问 ip138 页面
-    const res = await fetch(`https://www.ip138.com/iplookup.asp?ip=${ip}&action=2`, {
+    const res = await fetch(`http://whois.pconline.com.cn/ipJson.jsp?ip=${cleanIp}&json=true`, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.ip138.com/',
-        'Accept-Language': 'zh-CN,zh;q=0.9'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       },
       signal: controller.signal
     });
@@ -41,58 +44,62 @@ async function fetchFromIP138(ip) {
 
     if (res.ok) {
       const buffer = await res.arrayBuffer();
-      const htmlText = decodeGBK(buffer);
+      const text = decodeGBK(buffer);
+      const data = JSON.parse(text);
 
-      let rawLocation = '';
+      if (data && (data.pro || data.city || data.addr)) {
+        let fullInfo = '';
+        const pro = data.pro ? data.pro.trim() : '';
+        const city = data.city ? data.city.trim() : '';
+        const addr = data.addr ? data.addr.trim() : '';
 
-      // 正则 1：尝试匹配 JSON 结构中的 "ASN归属地"
-      const jsonMatch = htmlText.match(/\"ASN归属地\":\"([^\"]+)\"/);
-      if (jsonMatch && jsonMatch[1]) {
-        rawLocation = jsonMatch[1].trim();
-      } else {
-        // 正则 2：备用匹配网页 HTML 中的 "来自：xxx"
-        const htmlMatch = htmlText.match(/来自[：:]\s*([^\<]+)/);
-        if (htmlMatch && htmlMatch[1]) {
-          rawLocation = htmlMatch[1].trim();
+        if (pro && city && pro !== city) {
+          fullInfo = `${pro} ${city} ${addr}`.trim();
+        } else {
+          fullInfo = `${addr || pro || city}`.trim();
         }
-      }
 
-      if (rawLocation) {
-        // 清理多余的前缀（如 "中国 "）
-        let cleanText = rawLocation.replace(/^中国\s*/, '').trim();
+        // 清理掉前缀“中国”等重复词汇
+        fullInfo = fullInfo.replace(/^中国\s*/, '').replace(/\s+/g, ' ');
 
-        // 将多个连续空格替换为一个标准的英文空格
-        let formattedAddress = cleanText.replace(/\s+/g, ' ');
-
-        const result = { country: 'CN', city: formattedAddress || '未知城市' };
-        ipCache.set(ip, result);
-        return result;
+        if (fullInfo) {
+          const result = { country: 'CN', city: fullInfo };
+          ipCache.set(cleanIp, result);
+          return result;
+        }
       }
     }
   } catch (e) {
-    console.error(`ip138 抓取异常 (${ip}):`, e.message);
+    console.error(`太平洋 IP 接口请求失败 (${cleanIp}):`, e.message);
   }
 
-  // 降级备用：免费公共中文 API (免 Key)，确保主程序不崩溃
+  // === 方案 B：IP-API 备用接口（免费、免 Key、支持中文） ===
   try {
-    const res = await fetch(`http://ip-api.com/json/${ip}?lang=zh-CN`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+    const res = await fetch(`http://ip-api.com/json/${cleanIp}?lang=zh-CN`, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
     if (res.ok) {
       const data = await res.json();
       if (data.status === 'success') {
         const province = data.regionName || '';
         const city = data.city || '';
         const isp = data.isp || '';
-        const fullInfo = `${province} ${city} ${isp}`.trim();
+        const fullInfo = `${province} ${city} ${isp}`.trim().replace(/\s+/g, ' ');
 
         const result = {
           country: data.countryCode || 'CN',
           city: fullInfo || '未知城市'
         };
-        ipCache.set(ip, result);
+        ipCache.set(cleanIp, result);
         return result;
       }
     }
-  } catch (err) {}
+  } catch (err) {
+    console.error(`IP-API 接口请求失败 (${cleanIp}):`, err.message);
+  }
 
   return { country: 'CN', city: '未知城市' };
 }
@@ -130,7 +137,7 @@ export async function onRequestGet(context) {
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
-    // 实时通过 ip138 解析 IP
+    // 实时高精度 IP 解析
     const processDetails = async (rows) => {
       if (!rows || rows.length === 0) return [];
       
@@ -140,7 +147,7 @@ export async function onRequestGet(context) {
         let city = '未知城市';
 
         if (ip !== 'Unknown') {
-          const accurateGeo = await fetchFromIP138(ip);
+          const accurateGeo = await fetchAccurateGeo(ip);
           if (accurateGeo) {
             country = accurateGeo.country;
             city = accurateGeo.city;
@@ -297,7 +304,7 @@ export async function onRequestGet(context) {
               <div class="inner-title">🌐 域名 <strong>${escapeHtml(punycodeToUnicode(domain))}</strong> 今日访问明细：</div>
               <table>
                 <thead>
-                  <tr><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>地区 / 城市 / 运营商</th></tr>
+                  <tr><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>省份 / 城市 / 运营商</th></tr>
                 </thead>
                 <tbody>
                   ${innerRows || '<tr><td colspan="4" style="text-align:center;">暂无明细记录</td></tr>'}
@@ -492,7 +499,7 @@ export async function onRequestGet(context) {
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问地区 / 运营商排行榜 (点击展开明细)
-              <span class="sub-tip">⏱️ 基于 ip138.com 实时抓取解析</span>
+              <span class="sub-tip">⏱️ 免 Key 高精度中文解析</span>
             </h2>
             <div style="overflow-x: auto;">
               <table>
