@@ -1,25 +1,56 @@
-// 辅助函数：针对 Cloudflare 误判的 IP（如上海/数据中心/IPv6/Unknown）调用高精度接口校准
+// 内存缓存，避免重复查询同一个 IP
+const ipCache = new Map();
+
+// 辅助函数：通过高精度接口二次校准 IP
 async function fetchAccurateGeo(ip) {
   if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1') {
     return null;
   }
+
+  // 读取缓存
+  if (ipCache.has(ip)) {
+    return ipCache.get(ip);
+  }
+
   try {
-    // 使用 ip-api.com 进行实时校准（免费接口，支持 IPv4/IPv6，支持获取英文省市）
-    const res = await fetch(`http://ip-api.com/json/${ip}?lang=en`, {
-      headers: { 'User-Agent': 'Mozilla/5.0' }
+    // 使用 ip.sb 免费 JSON 接口（支持 HTTPS，对中国移动/电信/联通 IPv4 及 IPv6 解析极准）
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2秒超时保护
+
+    const res = await fetch(`https://api.ip.sb/geoip/${ip}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
+
     if (res.ok) {
       const data = await res.json();
-      if (data.status === 'success') {
-        return {
-          country: data.countryCode || 'CN',
-          // 优先使用 city，若 city 为空（常见于 IPv6 或部分移动网），自动退回使用 regionName（省份/自治区）
-          city: data.city || data.regionName || 'Unknown'
-        };
-      }
+      const result = {
+        country: data.country_code || 'CN',
+        // 优先取 city，若 city 为空或为 Unknown，取 region（省份/直辖市）
+        city: (data.city && data.city !== 'Unknown') ? data.city : (data.region || 'Unknown')
+      };
+      ipCache.set(ip, result);
+      return result;
     }
   } catch (e) {
-    console.error("IP 精准校准失败:", e);
+    // 如果超时或失败，尝试回退接口
+    try {
+      const res2 = await fetch(`https://ipapi.co/${ip}/json/`, {
+        headers: { 'User-Agent': 'Mozilla/5.0' }
+      });
+      if (res2.ok) {
+        const data2 = await res2.json();
+        const result2 = {
+          country: data2.country_code || 'CN',
+          city: data2.city || data2.region || 'Unknown'
+        };
+        ipCache.set(ip, result2);
+        return result2;
+      }
+    } catch (err) {
+      console.error("IP 精准校准失败:", err);
+    }
   }
   return null;
 }
@@ -66,7 +97,7 @@ export async function onRequestGet(context) {
         let country = row.country || row.country_code || 'Unknown';
         let city = row.city || 'Unknown';
 
-        // 如果城市为 Unknown、被识别为容易错判的上海/北京机房，或是 IPv6 地址，尝试进行二次高精度校准
+        // 如果城市为 Unknown、被识别为容易错判的上海/北京机房，或是 IPv6 地址，进行二次高精度校准
         if (city === 'Unknown' || city === 'Shanghai' || city === 'Beijing' || ip.includes(':')) {
           const accurateGeo = await fetchAccurateGeo(ip);
           if (accurateGeo) {
@@ -148,7 +179,7 @@ export async function onRequestGet(context) {
       yesterdayDomainMap[item.domain] = item.domain_total;
     });
 
-    // 5. 构建城市排行榜（使用校准后的今日及昨日明细重新聚合，彻底解决分类不准问题）
+    // 5. 构建城市排行榜（使用校准后的今日及昨日明细重新聚合）
     const cityRankMap = {};
     todayDetails.forEach(item => {
       const key = `${item.country}_${item.city}`;
