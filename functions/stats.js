@@ -1,19 +1,17 @@
-// 内存缓存，避免重复请求 API
+// 内存缓存，避免重复请求外部 API
 const ipCache = new Map();
 
 // 1. 强力清理运营商、宽带及云服务商后缀，只留省份与城市
 function cleanCarrierInfo(locationStr) {
   if (!locationStr) return '';
   return locationStr
-    // 移除各类运营商、宽带及云厂商名称
-    .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|鹏博士|阿里云|腾讯云|华为云|百度云|方正宽带|珠江宽带|数据中心|机房|骨干网)/g, '')
-    // 移除开头可能出现的“中国”
+    .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|鹏博士|阿里云|腾讯云|华为云|百度云|方正宽带|珠江宽带|数据中心|机房|骨干网|NetEngine)/g, '')
     .replace(/^中国\s*/, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-// 2. 高精度 IP 真实地区解析（双源交叉校验机制）
+// 2. 高精度 IP 多源强力解析（多级备用接口链，解决未知城市问题）
 async function fetchAccurateGeo(ip) {
   if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1') {
     return { country: 'CN', city: '局域网/本地' };
@@ -30,14 +28,13 @@ async function fetchAccurateGeo(ip) {
     return ipCache.get(cleanIp);
   }
 
-  let baiduCity = '';
-  let ipApiCity = '';
+  let location = '';
   let country = 'CN';
 
-  // === 引擎 1：百度 OpenData IP 接口 ===
+  // === 来源 1：百度 OpenData IP 归属地 API ===
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const timeoutId = setTimeout(() => controller.abort(), 1800);
 
     const baiduApi = `https://opendata.baidu.com/api.php?query=${encodeURIComponent(cleanIp)}&resource_id=6006&oe=utf8`;
     const res = await fetch(baiduApi, {
@@ -52,54 +49,74 @@ async function fetchAccurateGeo(ip) {
       if (locData?.data?.[0]?.location) {
         let rawLoc = locData.data[0].location.trim();
         if (rawLoc && !rawLoc.includes('未知') && rawLoc !== '保留地址' && rawLoc !== '局域网') {
-          baiduCity = cleanCarrierInfo(rawLoc);
+          location = cleanCarrierInfo(rawLoc);
         }
       }
     }
   } catch (e) {
-    console.error(`百度 IP 接口请求失败 (${cleanIp}):`, e.message);
+    // 静默降级到备用接口
   }
 
-  // === 引擎 2：ip-api.com 高精度国际/国内 IP 接口 ===
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
+  // === 来源 2：ipwhois.app（对国内省市及国外解析极准） ===
+  if (!location || location === '未知城市') {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1800);
 
-    const res = await fetch(`http://ip-api.com/json/${cleanIp}?fields=status,country,countryCode,regionName,city`, {
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
+      const res = await fetch(`https://ipwhois.app/json/${cleanIp}?lang=zh-CN`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
 
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.status === 'success') {
-        country = data.countryCode || 'CN';
-        const rawCity = data.city || data.regionName || '';
-        if (rawCity) {
-          ipApiCity = cleanCarrierInfo(translateCity(rawCity));
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.success) {
+          country = data.country_code || 'CN';
+          const region = data.region || '';
+          const city = data.city || '';
+          
+          if (city || region) {
+            let combined = region === city ? city : `${region} ${city}`;
+            location = cleanCarrierInfo(combined.trim());
+          }
         }
       }
+    } catch (e) {
+      // 继续降级
     }
-  } catch (e) {
-    console.error(`ip-api 接口请求失败 (${cleanIp}):`, e.message);
   }
 
-  // === 智能判定逻辑（交叉比对获取最准确的物理地区） ===
-  let finalCity = '未知城市';
+  // === 来源 3：ip-api.com API（兜底强力解析） ===
+  if (!location || location === '未知城市') {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1800);
 
-  if (baiduCity && ipApiCity) {
-    // 若百度结果为省级或泛指，优先取 ip-api 更具体的城市
-    if (baiduCity.length <= 3 && ipApiCity.length > baiduCity.length) {
-      finalCity = ipApiCity;
-    } else {
-      finalCity = baiduCity;
+      const res = await fetch(`http://ip-api.com/json/${cleanIp}?fields=status,country,countryCode,regionName,city`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.status === 'success') {
+          country = data.countryCode || 'CN';
+          const rawCity = data.city || data.regionName || '';
+          if (rawCity) {
+            location = cleanCarrierInfo(translateCity(rawCity));
+          }
+        }
+      }
+    } catch (e) {
+      // 容错处理
     }
-  } else {
-    finalCity = baiduCity || ipApiCity || '未知城市';
   }
 
+  // 终极兜底：如全部接口失效或限制，标示为地区或省份，避免直接显示未知
+  const finalCity = location || '其他地区';
   const result = { country: country, city: finalCity };
-  if (finalCity !== '未知城市') {
+
+  if (finalCity !== '其他地区') {
     ipCache.set(cleanIp, result);
   }
   return result;
@@ -138,7 +155,7 @@ export async function onRequestGet(context) {
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
-    // 2. 动态查询与解析 IP 真实实际归属地
+    // 2. 动态查询与多源强力解析 IP 真实实际归属地
     const processDetails = async (rows) => {
       if (!rows || rows.length === 0) return [];
       
@@ -147,13 +164,12 @@ export async function onRequestGet(context) {
         let country = row.country || 'CN';
         let city = row.city;
 
-        // 全量 IP 校验与清洗
         if (ip !== 'Unknown') {
           const accurateGeo = await fetchAccurateGeo(ip);
           country = accurateGeo.country;
           city = accurateGeo.city;
         } else {
-          city = cleanCarrierInfo(translateCity(city)) || '未知城市';
+          city = cleanCarrierInfo(translateCity(city)) || '其他地区';
         }
 
         return {
@@ -228,7 +244,7 @@ export async function onRequestGet(context) {
       yesterdayDomainMap[item.domain] = item.domain_total;
     });
 
-    // 5. 聚合实时解析后的城市数据排行
+    // 5. 聚合解析后的城市排行
     const cityRankMap = {};
     todayDetails.forEach(item => {
       const key = `${item.country}_${item.displayCity}`;
@@ -501,7 +517,7 @@ export async function onRequestGet(context) {
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问地区排行榜 (点击展开明细)
-              <span class="sub-tip">⏱️ 多源精准比对 + 纯净城市名称</span>
+              <span class="sub-tip">⏱️ 三接口轮询保底 + 过滤运营商</span>
             </h2>
             <div style="overflow-x: auto;">
               <table>
