@@ -1,5 +1,5 @@
 // ==========================================
-// 1. 国内省市拼音 -> 中文映射字典 (覆盖全国主要省市)
+// 1. 国内省市拼音 -> 中文映射字典 (全量覆盖)
 // ==========================================
 const PINYIN_TO_CHINESE = {
   // 省份/直辖市拼音
@@ -52,50 +52,28 @@ const PROVINCES_CN = [
   '北京', '上海', '天津', '重庆', '香港', '澳门'
 ];
 
-// 自动识别拼音并翻译成中文
 function pinyinToChinese(text) {
   if (!text) return '';
   let lower = text.trim().toLowerCase();
   
-  // 查找直接映射
   if (PINYIN_TO_CHINESE[lower]) {
     return PINYIN_TO_CHINESE[lower];
   }
   
-  // 尝试逐词匹配替换
   for (let [pinyin, cn] of Object.entries(PINYIN_TO_CHINESE)) {
     if (lower.includes(pinyin)) {
       return cn;
     }
   }
-  return text; // 找不到映射则返回原文本
+  return text;
 }
 
-// 评分函数：中文精准度评价
-function evaluatePrecision(locationStr) {
-  if (!locationStr || locationStr === '中国' || locationStr === '未知地区') return 0;
-  
-  // 匹配到具体“省+市/县”（如：陕西榆林）得分最高
-  for (let prov of PROVINCES_CN) {
-    if (locationStr.includes(prov)) {
-      if (locationStr.length > prov.length) {
-        return 3; // 精准地级市
-      }
-      return 1; // 仅省级
-    }
-  }
-
-  // 纯中文地名给 2 分
-  if (/[\u4e00-\u9fa5]/.test(locationStr)) return 2;
-  return 0;
-}
-
-// 统一过滤、清洗与中文字符格式化
+// 优化后的清洗函数：优先中文，未匹配到中文时保留拼音首字母大写格式
 function cleanAndExtractLocation(provinceRaw, cityRaw) {
   let prov = pinyinToChinese(provinceRaw || '');
   let city = pinyinToChinese(cityRaw || '');
 
-  // 1. 如果包含中文省份，进行格式化组合
+  // 1. 匹配省份组合
   for (let p of PROVINCES_CN) {
     if (prov.includes(p) || city.includes(p)) {
       let cleanCity = city.replace(new RegExp(`^${p}`), '')
@@ -103,14 +81,18 @@ function cleanAndExtractLocation(provinceRaw, cityRaw) {
                           .replace(/(市|州|盟|区|县)$/, '');
       cleanCity = pinyinToChinese(cleanCity);
 
-      if (cleanCity && cleanCity !== p && /^[\u4e00-\u9fa5]+$/.test(cleanCity)) {
+      if (cleanCity && cleanCity !== p) {
+        // 如果未查到字典属于拼音，格式化首字母大写
+        if (/[a-zA-Z]/.test(cleanCity)) {
+          cleanCity = cleanCity.charAt(0).toUpperCase() + cleanCity.slice(1);
+        }
         return `${p}${cleanCity}`;
       }
       return p;
     }
   }
 
-  // 2. 清洗普通文本
+  // 2. 普通文本过滤
   let combined = `${prov}${city}`
     .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房)/g, '')
     .replace(/^中国\s*/, '')
@@ -118,14 +100,16 @@ function cleanAndExtractLocation(provinceRaw, cityRaw) {
 
   combined = pinyinToChinese(combined);
 
-  // 移除所有英文单词，确保不输出拼音
-  combined = combined.replace(/[a-zA-Z]/g, '').trim();
+  // 如果依然包含英文拼音，保留并规范首字母大写
+  if (/[a-zA-Z]/.test(combined)) {
+    return combined.charAt(0).toUpperCase() + combined.slice(1);
+  }
 
   return combined || null;
 }
 
-// 带超时控制的异步 Fetch 封装
-async function fetchWithTimeout(url, timeout = 1500) {
+// 带超时的 Fetch 封装
+async function fetchWithTimeout(url, timeout = 1200) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
   try {
@@ -142,60 +126,47 @@ async function fetchWithTimeout(url, timeout = 1500) {
 }
 
 // ==========================================
-// 2. 在线并发 IP 接口节点
+// 2. 接口分层请求逻辑（优先国内原生地名）
 // ==========================================
 
-// [接口 1] 百度 OpenData（国内中文精准度第一）
+// [优先接口 1] 百度 OpenData（国内原生中文，精度最高）
 async function apiBaidu(cleanIp) {
   const res = await fetchWithTimeout(`https://opendata.baidu.com/api.php?query=${encodeURIComponent(cleanIp)}&resource_id=6006&oe=utf8`);
   if (!res.ok) throw new Error('Baidu HTTP error');
   const data = await res.json();
   const loc = data?.data?.[0]?.location || '';
   const parsed = cleanAndExtractLocation('', loc);
-  if (parsed) return { country: 'CN', city: parsed, score: evaluatePrecision(parsed) };
+  if (parsed) return { country: 'CN', city: parsed };
   throw new Error('Baidu parse failed');
 }
 
-// [接口 2] IP-API（全网通用，支持拼音自动转中文）
+// [备用接口 2] IP-API（支持 zh-CN 语言包）
 async function apiIpApi(cleanIp) {
   const res = await fetchWithTimeout(`http://ip-api.com/json/${cleanIp}?fields=status,countryCode,regionName,city&lang=zh-CN`);
   if (!res.ok) throw new Error('IpApi HTTP error');
   const data = await res.json();
   if (data && data.status === 'success') {
     const parsed = cleanAndExtractLocation(data.regionName, data.city);
-    if (parsed) return { country: data.countryCode || 'CN', city: parsed, score: evaluatePrecision(parsed) };
+    if (parsed) return { country: data.countryCode || 'CN', city: parsed };
   }
   throw new Error('IpApi parse failed');
 }
 
-// [接口 3] IpWhois（太平洋、海外及国内节点覆盖）
+// [备用接口 3] IpWhois
 async function apiIpWhois(cleanIp) {
   const res = await fetchWithTimeout(`https://ipwhois.app/json/${cleanIp}?lang=zh-CN`);
   if (!res.ok) throw new Error('IpWhois HTTP error');
   const data = await res.json();
   if (data && data.success) {
     const parsed = cleanAndExtractLocation(data.region, data.city);
-    if (parsed) return { country: data.country_code || 'CN', city: parsed, score: evaluatePrecision(parsed) };
+    if (parsed) return { country: data.country_code || 'CN', city: parsed };
   }
   throw new Error('IpWhois parse failed');
 }
 
-// [接口 4] IP.SB 节点
-async function apiIpSb(cleanIp) {
-  const res = await fetchWithTimeout(`https://api.ip.sb/geoip/${cleanIp}`);
-  if (!res.ok) throw new Error('IP.SB HTTP error');
-  const data = await res.json();
-  const parsed = cleanAndExtractLocation(data.region, data.city);
-  if (parsed) return { country: data.country_code || 'CN', city: parsed, score: evaluatePrecision(parsed) };
-  throw new Error('IP.SB parse failed');
-}
-
-// 内存缓存字典，提升响应效率
 const globalIpCache = new Map();
 
-// ==========================================
-// 3. 多源并行竞速 + 拼音转中文决策调度器
-// ==========================================
+// 优化后的决策调度器
 async function resolveBestGlobalGeo(ip) {
   if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1') {
     return { country: 'CN', city: '局域网/本地' };
@@ -210,46 +181,40 @@ async function resolveBestGlobalGeo(ip) {
     return globalIpCache.get(cleanIp);
   }
 
-  // 4 个 API 并发全网竞速
-  const promises = [
-    apiBaidu(cleanIp),
+  // 1. 优先调用百度原生中文 API
+  try {
+    const baiduResult = await apiBaidu(cleanIp);
+    if (baiduResult && baiduResult.city) {
+      globalIpCache.set(cleanIp, baiduResult);
+      return baiduResult;
+    }
+  } catch (e) {
+    // 百度请求超时或失败时静默降级
+  }
+
+  // 2. 降级：并发调用其余 API 并进行拼音/中文过滤
+  const backupPromises = [
     apiIpApi(cleanIp),
-    apiIpWhois(cleanIp),
-    apiIpSb(cleanIp)
+    apiIpWhois(cleanIp)
   ];
 
   try {
-    const results = await Promise.allSettled(promises);
-    let bestResult = null;
-
+    const results = await Promise.allSettled(backupPromises);
     for (const res of results) {
-      if (res.status === 'fulfilled' && res.value) {
-        // 匹配到满分中文“省+市”（如：“陕西榆林”），直接采用
-        if (res.value.score === 3) {
-          bestResult = res.value;
-          break;
-        }
-        // 择优选择得分最高且不含拼音的结果
-        if (!bestResult || res.value.score > bestResult.score) {
-          bestResult = res.value;
-        }
+      if (res.status === 'fulfilled' && res.value && res.value.city) {
+        globalIpCache.set(cleanIp, res.value);
+        return res.value;
       }
     }
-
-    if (bestResult && bestResult.city) {
-      const finalData = { country: bestResult.country, city: bestResult.city };
-      globalIpCache.set(cleanIp, finalData);
-      return finalData;
-    }
   } catch (e) {
-    console.error("竞速解析失败:", e);
+    console.error("解析失败:", e);
   }
 
   return { country: 'CN', city: '中国' };
 }
 
 // ==========================================
-// 4. Cloudflare Pages 业务主入口
+// 3. Cloudflare Pages 业务主入口
 // ==========================================
 export async function onRequestGet(context) {
   const { request, env } = context;
@@ -280,14 +245,11 @@ export async function onRequestGet(context) {
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
-    // 批量并发处理 IP 定位
     const processDetails = async (rows) => {
       if (!rows || rows.length === 0) return [];
       
       return await Promise.all(rows.map(async (row) => {
         const realIp = row.ip || 'Unknown';
-        
-        // 竞速并翻译拼音为中文
         const geo = await resolveBestGlobalGeo(realIp);
 
         return {
