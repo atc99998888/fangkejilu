@@ -1,7 +1,19 @@
-// 内存缓存，避免频繁重复请求外部 API
+// 内存缓存，避免重复请求 API
 const ipCache = new Map();
 
-// 核心 IP 高精度解析函数（百度为主，ip-api 为备用）
+// 1. 强力清理运营商、宽带及云服务商后缀，只留省份与城市
+function cleanCarrierInfo(locationStr) {
+  if (!locationStr) return '';
+  return locationStr
+    // 移除各类运营商、宽带及云厂商名称
+    .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|鹏博士|阿里云|腾讯云|华为云|百度云|方正宽带|珠江宽带|数据中心|机房|骨干网)/g, '')
+    // 移除开头可能出现的“中国”
+    .replace(/^中国\s*/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// 2. 高精度 IP 真实地区解析（双源交叉校验机制）
 async function fetchAccurateGeo(ip) {
   if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1') {
     return { country: 'CN', city: '局域网/本地' };
@@ -9,19 +21,20 @@ async function fetchAccurateGeo(ip) {
 
   // 清洗 IP 格式
   let cleanIp = ip.split('/')[0].trim();
-  if (cleanIp.startsWith('192.168.') || cleanIp.startsWith('10.')) {
+  if (cleanIp.startsWith('192.168.') || cleanIp.startsWith('10.') || cleanIp.startsWith('172.16.')) {
     return { country: 'CN', city: '局域网/本地' };
   }
 
-  // 1. 读取缓存
+  // 读取内存缓存
   if (ipCache.has(cleanIp)) {
     return ipCache.get(cleanIp);
   }
 
-  let location = '';
+  let baiduCity = '';
+  let ipApiCity = '';
   let country = 'CN';
 
-  // === 方案 A：百度 OpenData IP 归属地 API（首选） ===
+  // === 引擎 1：百度 OpenData IP 接口 ===
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2000);
@@ -29,35 +42,25 @@ async function fetchAccurateGeo(ip) {
     const baiduApi = `https://opendata.baidu.com/api.php?query=${encodeURIComponent(cleanIp)}&resource_id=6006&oe=utf8`;
     const res = await fetch(baiduApi, {
       method: 'GET',
-      headers: { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' 
-      },
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
       signal: controller.signal
     });
     clearTimeout(timeoutId);
 
     if (res.ok) {
       const locData = await res.json();
-      if (locData && locData.data && locData.data[0] && locData.data[0].location) {
+      if (locData?.data?.[0]?.location) {
         let rawLoc = locData.data[0].location.trim();
-        // 过滤无法识别的关键词
         if (rawLoc && !rawLoc.includes('未知') && rawLoc !== '保留地址' && rawLoc !== '局域网') {
-          location = rawLoc.replace(/^中国\s*/, '').replace(/\s+/g, ' ');
+          baiduCity = cleanCarrierInfo(rawLoc);
         }
       }
     }
   } catch (e) {
-    console.error(`百度 IP 接口异常 (${cleanIp}):`, e.message);
+    console.error(`百度 IP 接口请求失败 (${cleanIp}):`, e.message);
   }
 
-  // 如果百度成功解析到了具体位置，直接返回
-  if (location) {
-    const result = { country: 'CN', city: location };
-    ipCache.set(cleanIp, result);
-    return result;
-  }
-
-  // === 方案 B：ip-api.com API（备用，当百度返回未知或请求超时时触发） ===
+  // === 引擎 2：ip-api.com 高精度国际/国内 IP 接口 ===
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2000);
@@ -73,25 +76,33 @@ async function fetchAccurateGeo(ip) {
         country = data.countryCode || 'CN';
         const rawCity = data.city || data.regionName || '';
         if (rawCity) {
-          // 翻译备用接口返回的英文城市/省份名称
-          location = translateCity(rawCity);
+          ipApiCity = cleanCarrierInfo(translateCity(rawCity));
         }
       }
     }
   } catch (e) {
-    console.error(`备用 IP 接口异常 (${cleanIp}):`, e.message);
+    console.error(`ip-api 接口请求失败 (${cleanIp}):`, e.message);
   }
 
-  // 最终兜底逻辑
-  const finalResult = { 
-    country: country, 
-    city: location || '未知城市' 
-  };
-  
-  if (location) {
-    ipCache.set(cleanIp, finalResult);
+  // === 智能判定逻辑（交叉比对获取最准确的物理地区） ===
+  let finalCity = '未知城市';
+
+  if (baiduCity && ipApiCity) {
+    // 若百度结果为省级或泛指，优先取 ip-api 更具体的城市
+    if (baiduCity.length <= 3 && ipApiCity.length > baiduCity.length) {
+      finalCity = ipApiCity;
+    } else {
+      finalCity = baiduCity;
+    }
+  } else {
+    finalCity = baiduCity || ipApiCity || '未知城市';
   }
-  return finalResult;
+
+  const result = { country: country, city: finalCity };
+  if (finalCity !== '未知城市') {
+    ipCache.set(cleanIp, result);
+  }
+  return result;
 }
 
 export async function onRequestGet(context) {
@@ -105,7 +116,7 @@ export async function onRequestGet(context) {
     return new Response("未授权访问：请在 URL 末尾加上 ?key=你的密码", { status: 403 });
   }
 
-  // 检查 D1 绑定是否存在
+  // 检查 D1 数据库绑定
   if (!env || !env.DB) {
     return new Response("数据库未绑定：请在 Cloudflare Pages 设置中绑定名为 DB 的 D1 数据库", { status: 500 });
   }
@@ -127,7 +138,7 @@ export async function onRequestGet(context) {
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
-    // 2. 动态查询与解析 IP 归属地
+    // 2. 动态查询与解析 IP 真实实际归属地
     const processDetails = async (rows) => {
       if (!rows || rows.length === 0) return [];
       
@@ -136,17 +147,13 @@ export async function onRequestGet(context) {
         let country = row.country || 'CN';
         let city = row.city;
 
-        // 如果数据库中的城市是未知，或者为了提升精度，进行实时解析
-        if (!city || city === 'Unknown' || city === '未知城市') {
-          if (ip !== 'Unknown') {
-            const accurateGeo = await fetchAccurateGeo(ip);
-            country = accurateGeo.country;
-            city = accurateGeo.city;
-          } else {
-            city = '未知城市';
-          }
+        // 全量 IP 校验与清洗
+        if (ip !== 'Unknown') {
+          const accurateGeo = await fetchAccurateGeo(ip);
+          country = accurateGeo.country;
+          city = accurateGeo.city;
         } else {
-          city = translateCity(city);
+          city = cleanCarrierInfo(translateCity(city)) || '未知城市';
         }
 
         return {
@@ -177,7 +184,7 @@ export async function onRequestGet(context) {
     `).all();
     const yesterdayDetails = await processDetails(yesterdayDetailsRaw?.results);
 
-    // 3. 获取最近 7 天每日访问量
+    // 3. 最近 7 天每日访问量统计
     const last7DaysRes = await env.DB.prepare(`
       SELECT DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) as date, COUNT(*) as count 
       FROM visits 
@@ -200,7 +207,7 @@ export async function onRequestGet(context) {
       });
     }
 
-    // 4. 查询【今日】与【昨日】域名排行榜
+    // 4. 域名排行榜
     const domainRankRes = await env.DB.prepare(`
       SELECT domain, COUNT(*) as domain_total 
       FROM visits 
@@ -221,7 +228,7 @@ export async function onRequestGet(context) {
       yesterdayDomainMap[item.domain] = item.domain_total;
     });
 
-    // 5. 聚合实时解析后的城市数据进行排行
+    // 5. 聚合实时解析后的城市数据排行
     const cityRankMap = {};
     todayDetails.forEach(item => {
       const key = `${item.country}_${item.displayCity}`;
@@ -239,7 +246,7 @@ export async function onRequestGet(context) {
       yesterdayCityMap[key] = (yesterdayCityMap[key] || 0) + 1;
     });
 
-    // 渲染通用顶部卡片明细表格
+    // 渲染通用表格行
     const renderTableRows = (list) => {
       if (!list || list.length === 0) {
         return '<tr><td colspan="5" style="text-align:center; color:#999;">暂无访问记录</td></tr>';
@@ -258,7 +265,7 @@ export async function onRequestGet(context) {
     const todayTableRowsHtml = renderTableRows(todayDetails);
     const yesterdayTableRowsHtml = renderTableRows(yesterdayDetails);
 
-    // 构建按域名与按城市归类映射
+    // 构建映射
     const domainDetailsMap = {};
     const cityDetailsMap = {};
 
@@ -271,7 +278,7 @@ export async function onRequestGet(context) {
       cityDetailsMap[cityKey].push(item);
     });
 
-    // 生成域名排行榜 HTML
+    // 域名排行榜 HTML
     let domainRankHtml = domainRank.map((item, index) => {
       const domain = item.domain;
       const list = domainDetailsMap[domain] || [];
@@ -299,7 +306,7 @@ export async function onRequestGet(context) {
               <div class="inner-title">🌐 域名 <strong>${escapeHtml(punycodeToUnicode(domain))}</strong> 今日访问明细：</div>
               <table>
                 <thead>
-                  <tr><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>省份 / 城市 / 运营商</th></tr>
+                  <tr><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>省份 / 城市</th></tr>
                 </thead>
                 <tbody>
                   ${innerRows || '<tr><td colspan="4" style="text-align:center;">暂无明细记录</td></tr>'}
@@ -311,7 +318,7 @@ export async function onRequestGet(context) {
       `;
     }).join('');
 
-    // 生成城市排行榜 HTML
+    // 城市排行榜 HTML
     let cityRankHtml = cityRank.map((item, index) => {
       const cityKey = `${item.country}_${item.city}`;
       const list = cityDetailsMap[cityKey] || [];
@@ -423,7 +430,7 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 今日全量明细面板 -->
+          <!-- 今日明细 -->
           <div class="panel" id="today-detail-panel" style="display: none; border: 2px solid #0066ff;">
             <h2 class="panel-title" style="color: #0066ff;">
               📋 今日全量访问明细（共 ${todayVisits} 条记录）
@@ -432,7 +439,7 @@ export async function onRequestGet(context) {
             <div style="overflow-x: auto; max-height: 400px;">
               <table>
                 <thead>
-                  <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>省份 / 城市 / 运营商</th></tr>
+                  <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>省份 / 城市</th></tr>
                 </thead>
                 <tbody>
                   ${todayTableRowsHtml}
@@ -441,7 +448,7 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 昨日全量明细面板 -->
+          <!-- 昨日明细 -->
           <div class="panel" id="yesterday-detail-panel" style="display: none; border: 2px solid #8e44ad;">
             <h2 class="panel-title" style="color: #8e44ad;">
               📜 昨日全量访问明细（共 ${yesterdayVisits} 条记录）
@@ -450,7 +457,7 @@ export async function onRequestGet(context) {
             <div style="overflow-x: auto; max-height: 400px;">
               <table>
                 <thead>
-                  <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>省份 / 城市 / 运营商</th></tr>
+                  <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>省份 / 城市</th></tr>
                 </thead>
                 <tbody>
                   ${yesterdayTableRowsHtml}
@@ -459,7 +466,7 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 2. 最近 7 天访问趋势图 -->
+          <!-- 2. 最近 7 天趋势图 -->
           <div class="panel">
             <h2 class="panel-title">📈 最近 7 天访问趋势图</h2>
             <div class="chart-container">
@@ -490,11 +497,11 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 4. 热门访问城市排行榜 -->
+          <!-- 4. 热门城市排行榜 -->
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问地区排行榜 (点击展开明细)
-              <span class="sub-tip">⏱️ 百度 API + ip-api 双引擎高精度保障</span>
+              <span class="sub-tip">⏱️ 多源精准比对 + 纯净城市名称</span>
             </h2>
             <div style="overflow-x: auto;">
               <table>
@@ -502,7 +509,7 @@ export async function onRequestGet(context) {
                   <tr>
                     <th style="width: 70px; text-align: center;">排名</th>
                     <th>国家 / 地区</th>
-                    <th>省份 / 城市 / 运营商</th>
+                    <th>省份 / 城市</th>
                     <th>今日访问次数</th>
                     <th>昨日访问次数</th>
                   </tr>
