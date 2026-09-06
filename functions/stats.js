@@ -1,7 +1,7 @@
-// 内存缓存，避免频繁请求 ip138
+// 内存缓存，避免频繁重复请求 ip138
 const ipCache = new Map();
 
-// 辅助函数：将 GBK Buffer 转为 UTF-8 字符串
+// 辅助函数：将 GBK Buffer 转为 UTF-8 字符串（ip138 页面为 GBK 编码）
 function decodeGBK(buffer) {
   try {
     const decoder = new TextDecoder('gbk');
@@ -12,7 +12,7 @@ function decodeGBK(buffer) {
   }
 }
 
-// 核心函数：无需 Key，直接抓取 ip138.com 的网页并提取城市
+// 核心函数：实时抓取 ip138 并解析完整的【省 + 市 + 运营商】
 async function fetchFromIP138(ip) {
   // 过滤无效或局域网 IP
   if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.')) {
@@ -26,7 +26,7 @@ async function fetchFromIP138(ip) {
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 秒超时
+    const timeoutId = setTimeout(() => controller.abort(), 3500); // 3.5 秒超时
 
     // 模拟真实浏览器访问 ip138 页面
     const res = await fetch(`https://www.ip138.com/iplookup.asp?ip=${ip}&action=2`, {
@@ -43,41 +43,50 @@ async function fetchFromIP138(ip) {
       const buffer = await res.arrayBuffer();
       const htmlText = decodeGBK(buffer);
 
-      // 提取 ip138 页面上的归属地文本
-      // ip138 页面格式通常形如："ASN归属地":"中国 广东 广州 电信"
-      const match = htmlText.match(/\"ASN归属地\":\"([^\"]+)\"/);
-      if (match && match[1]) {
-        let fullAddr = match[1].trim();
-        let parts = fullAddr.split(/\s+/); // 按空格切割
+      let rawLocation = '';
 
-        let country = 'CN';
-        let city = '未知城市';
-
-        if (parts.length >= 2) {
-          // 例如："中国 广东 广州 电信" -> 省/市取 parts[1] 或 parts[2]
-          city = parts.slice(1, 3).join(' '); // 组合省和市，如 "广东 广州"
-        } else if (parts.length === 1) {
-          city = parts[0];
+      // 正则 1：尝试匹配 JSON 结构中的 "ASN归属地"
+      const jsonMatch = htmlText.match(/\"ASN归属地\":\"([^\"]+)\"/);
+      if (jsonMatch && jsonMatch[1]) {
+        rawLocation = jsonMatch[1].trim();
+      } else {
+        // 正则 2：备用匹配网页 HTML 中的 "来自：xxx"
+        const htmlMatch = htmlText.match(/来自[：:]\s*([^\<]+)/);
+        if (htmlMatch && htmlMatch[1]) {
+          rawLocation = htmlMatch[1].trim();
         }
+      }
 
-        const result = { country, city };
+      if (rawLocation) {
+        // 清理多余的前缀（如 "中国 "）
+        let cleanText = rawLocation.replace(/^中国\s*/, '').trim();
+
+        // 将多个连续空格替换为一个标准的英文空格
+        let formattedAddress = cleanText.replace(/\s+/g, ' ');
+
+        const result = { country: 'CN', city: formattedAddress || '未知城市' };
         ipCache.set(ip, result);
         return result;
       }
     }
   } catch (e) {
-    console.error(`ip138 抓取失败 (${ip}):`, e.message);
+    console.error(`ip138 抓取异常 (${ip}):`, e.message);
   }
 
-  // 降级备用：免费公共中文 API (不需 Key)
+  // 降级备用：免费公共中文 API (免 Key)，确保主程序不崩溃
   try {
     const res = await fetch(`http://ip-api.com/json/${ip}?lang=zh-CN`);
     if (res.ok) {
       const data = await res.json();
       if (data.status === 'success') {
+        const province = data.regionName || '';
+        const city = data.city || '';
+        const isp = data.isp || '';
+        const fullInfo = `${province} ${city} ${isp}`.trim();
+
         const result = {
           country: data.countryCode || 'CN',
-          city: data.city || data.regionName || '未知城市'
+          city: fullInfo || '未知城市'
         };
         ipCache.set(ip, result);
         return result;
@@ -229,7 +238,7 @@ export async function onRequestGet(context) {
       yesterdayCityMap[key] = (yesterdayCityMap[key] || 0) + 1;
     });
 
-    // 表格渲染
+    // 表格渲染辅助函数
     const renderTableRows = (list) => {
       if (!list || list.length === 0) {
         return '<tr><td colspan="5" style="text-align:center; color:#999;">暂无访问记录</td></tr>';
@@ -288,7 +297,7 @@ export async function onRequestGet(context) {
               <div class="inner-title">🌐 域名 <strong>${escapeHtml(punycodeToUnicode(domain))}</strong> 今日访问明细：</div>
               <table>
                 <thead>
-                  <tr><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
+                  <tr><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>地区 / 城市 / 运营商</th></tr>
                 </thead>
                 <tbody>
                   ${innerRows || '<tr><td colspan="4" style="text-align:center;">暂无明细记录</td></tr>'}
@@ -325,7 +334,7 @@ export async function onRequestGet(context) {
         <tr id="city-detail-${index}" class="detail-row" style="display: none;">
           <td colspan="5" class="detail-cell">
             <div class="inner-table-wrapper">
-              <div class="inner-title">🏙️ 城市 <strong>${item.city}</strong> 今日来源域名与时间明细：</div>
+              <div class="inner-title">🏙️ 地区 <strong>${item.city}</strong> 今日来源域名与时间明细：</div>
               <table>
                 <thead>
                   <tr><th>访问时间 (北京时间)</th><th>被访问域名</th><th>访客 IP</th></tr>
@@ -421,7 +430,7 @@ export async function onRequestGet(context) {
             <div style="overflow-x: auto; max-height: 400px;">
               <table>
                 <thead>
-                  <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
+                  <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>省份 / 城市 / 运营商</th></tr>
                 </thead>
                 <tbody>
                   ${todayTableRowsHtml}
@@ -439,7 +448,7 @@ export async function onRequestGet(context) {
             <div style="overflow-x: auto; max-height: 400px;">
               <table>
                 <thead>
-                  <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
+                  <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>省份 / 城市 / 运营商</th></tr>
                 </thead>
                 <tbody>
                   ${yesterdayTableRowsHtml}
@@ -479,11 +488,11 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 4. 城市排行榜 -->
+          <!-- 4. 城市与运营商排行榜 -->
           <div class="panel">
             <h2 class="panel-title">
-              🏙️ 热门访问城市排行榜 (点击展开明细)
-              <span class="sub-tip">⏱️ 基于 ip138.com 实时解析</span>
+              🏙️ 热门访问地区 / 运营商排行榜 (点击展开明细)
+              <span class="sub-tip">⏱️ 基于 ip138.com 实时抓取解析</span>
             </h2>
             <div style="overflow-x: auto;">
               <table>
@@ -491,7 +500,7 @@ export async function onRequestGet(context) {
                   <tr>
                     <th style="width: 70px; text-align: center;">排名</th>
                     <th>国家 / 地区</th>
-                    <th>城市</th>
+                    <th>省份 / 城市 / 运营商</th>
                     <th>今日访问次数</th>
                     <th>昨日访问次数</th>
                   </tr>
