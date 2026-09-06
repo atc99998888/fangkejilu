@@ -1,115 +1,58 @@
 // ==========================================
-// 1. 国内省市拼音 -> 中文映射字典 (全量覆盖)
+// 1. 深度省市解析与精度打分引擎
 // ==========================================
-const PINYIN_TO_CHINESE = {
-  // 省份/直辖市拼音
-  'shaanxi': '陕西', 'shanxi': '山西', 'shandong': '山东', 'henan': '河南', 'hebei': '河北',
-  'hunan': '湖南', 'hubei': '湖北', 'guangdong': '广东', 'guangxi': '广西', 'sichuan': '四川',
-  'zhejiang': '浙江', 'jiangsu': '江苏', 'fujian': '福建', 'liaoning': '辽宁', 'jilin': '吉林',
-  'heilongjiang': '黑龙江', 'yunnan': '云南', 'guizhou': '贵州', 'gansu': '甘肃', 'qinghai': '青海',
-  'inner mongolia': '内蒙古', 'neimenggu': '内蒙古', 'xinjiang': '新疆', 'tibet': '西藏', 'xizang': '西藏',
-  'hainan': '海南', 'ningxia': '宁夏', 'jiangxi': '江西', 'anhui': '安徽', 'taiwan': '台湾',
-  'beijing': '北京', 'shanghai': '上海', 'tianjin': '天津', 'chongqing': '重庆', 'hong kong': '香港',
-  'hongkong': '香港', 'macau': '澳门', 'macao': '澳门',
-
-  // 主要城市拼音
-  'yulin': '榆林', 'xian': '西安', 'xianyang': '咸阳', 'baoji': '宝鸡', 'weinan': '渭南', 'yanan': '延安',
-  'hanzhong': '汉中', 'ankang': '安康', 'shangluo': '商洛', 'tongchuan': '铜川',
-  'guangzhou': '广州', 'shenzhen': '深圳', 'dongguan': '东莞', 'foshan': '佛山', 'zhuhai': '珠海',
-  'huizhou': '惠州', 'zhongshan': '中山', 'jiangmen': '江门', 'zhanjiang': '湛江', 'shantou': '汕头',
-  'hangzhou': '杭州', 'ningbo': '宁波', 'wenzhou': '温州', 'jiaxing': '嘉兴', 'huzhou': '湖州',
-  'shaoxing': '绍兴', 'jinhua': '金华', 'quzhou': '衢州', 'zhoushan': '舟山', 'taizhou': '台州',
-  'nanjing': '南京', 'suzhou': '苏州', 'wuxi': '无锡', 'changzhou': '常州', 'nantong': '南通',
-  'yangzhou': '扬州', 'zhenjiang': '镇江', 'huaian': '淮安', 'yancheng': '盐城', 'xuzhou': '徐州',
-  'chengdu': '成都', 'mianyang': '绵阳', 'deyang': '德阳', 'yibin': '宜宾', 'nanchong': '南充',
-  'wuhan': '武汉', 'xiangyang': '襄阳', 'yichang': '宜昌', 'huangshi': '黄石', 'jingzhou': '荆州',
-  'changsha': '长沙', 'zhuzhou': '株洲', 'xiangtan': '湘潭', 'hengyang': '衡阳', 'shaoyang': '邵阳',
-  'jinan': '济南', 'qingdao': '青岛', 'yantai': '烟台', 'weifang': '潍坊', 'jining': '济宁',
-  'zibo': '淄博', 'linyi': '临沂', 'taian': '泰安', 'weihai': '威海', 'rizhao': '日照',
-  'zhengzhou': '郑州', 'luoyang': '洛阳', 'kaifeng': '开封', 'xinxiang': '新乡', 'jiaozuo': '焦作',
-  'fuzhou': '福州', 'xiamen': '厦门', 'quanzhou': '泉州', 'zhangzhou': '漳州', 'putian': '莆田',
-  'shenyang': '沈阳', 'dalian': '大连', 'anshan': '鞍山', 'fushun': '抚顺', 'benxi': '本溪',
-  'harbin': '哈尔滨', 'daqing': '大庆', 'qiqihaer': '齐齐哈尔', 'mudanjiang': '牡丹江',
-  'changchun': '长春', 'jilin city': '吉林', 'siping': '四平', 'liaoyuan': '辽源',
-  'shijiazhuang': '石家庄', 'tangshan': '唐山', 'qinhuangdao': '秦皇岛', 'handan': '邯郸', 'baoding': '保定',
-  'taiyuan': '太原', 'datong': '大同', 'yangquan': '阳泉', 'changzhi': '长治', 'jincheng': '晋城',
-  'nanchang': '南昌', 'ganzhou': '赣州', 'jiujiang': '九江', 'yichun': '宜春', 'shangrao': '上饶',
-  'hefei': '合肥', 'wuhu': '芜湖', 'bengbu': '蚌埠', 'huainan': '淮南', 'maanshan': '马鞍山',
-  'kunming': '昆明', 'qujing': '曲靖', 'yuxi': '玉溪', 'baoshan': '保山', 'zhaotong': '昭通',
-  'guiyang': '贵阳', 'zunyi': '遵义', 'liupanshui': '六盘水', 'anshun': '安顺',
-  'nanning': '南宁', 'guilin': '桂林', 'liuzhou': '柳州', 'wuzhou': '梧州', 'beihai': '北海',
-  'lanzhou': '兰州', 'tianshui': '天水', 'jiayuguan': '嘉峪关', 'jinchang': '金昌',
-  'xining': '西宁', 'haidong': '海东',
-  'yinchuan': '银川', 'shizuishan': '石嘴山', 'wuzhong': '吴忠',
-  'urumuqi': '乌鲁木齐', 'karamay': '克拉玛依',
-  'hohhot': '呼和浩特', 'baotou': '包头', 'wuhai': '乌海', 'chifeng': '赤峰'
-};
-
-const PROVINCES_CN = [
+const PROVINCES = [
   '陕西', '山西', '山东', '河南', '河北', '湖南', '湖北', '广东', '广西', 
   '四川', '浙江', '江苏', '福建', '辽宁', '吉林', '黑龙江', '云南', '贵州', 
-  '甘肃', '青海', '内蒙古', '新疆', '西藏', '海南', '宁夏', '江西', '安徽', '台湾',
-  '北京', '上海', '天津', '重庆', '香港', '澳门'
+  '甘肃', '青海', '内蒙古', '新疆', '西藏', '海南', '宁夏', '江西', '安徽', '台湾'
 ];
 
-function pinyinToChinese(text) {
-  if (!text) return '';
-  let lower = text.trim().toLowerCase();
+// 判断解析结果的“精细度得分”（得分越高越优先选择）
+function evaluatePrecision(locationStr) {
+  if (!locationStr || locationStr === '中国' || locationStr === '未知地区') return 0;
   
-  if (PINYIN_TO_CHINESE[lower]) {
-    return PINYIN_TO_CHINESE[lower];
-  }
-  
-  for (let [pinyin, cn] of Object.entries(PINYIN_TO_CHINESE)) {
-    if (lower.includes(pinyin)) {
-      return cn;
+  // 匹配到具体“省+市/县”（如：陕西榆林、广东深圳）得最高分 3 分
+  for (let prov of PROVINCES) {
+    if (locationStr.includes(prov)) {
+      if (locationStr.length > prov.length) {
+        return 3; // 精准到地级市或县区
+      }
+      return 1; // 仅精准到省份
     }
   }
-  return text;
+
+  // 海外地区或直辖市（如：北京、东京、旧金山）得 2 分
+  if (locationStr.length >= 2) return 2;
+  return 0;
 }
 
-// 优化后的清洗函数：优先中文，未匹配到中文时保留拼音首字母大写格式
-function cleanAndExtractLocation(provinceRaw, cityRaw) {
-  let prov = pinyinToChinese(provinceRaw || '');
-  let city = pinyinToChinese(cityRaw || '');
+// 统一提取省市名称，去除“省”、“市”、“电信”、“机房”等杂质
+function cleanAndExtractLocation(rawStr) {
+  if (!rawStr) return null;
 
-  // 1. 匹配省份组合
-  for (let p of PROVINCES_CN) {
-    if (prov.includes(p) || city.includes(p)) {
-      let cleanCity = city.replace(new RegExp(`^${p}`), '')
-                          .replace(/(省|市|自治区|特别行政区|壮族|回族|维吾尔|电信|联通|移动)$/g, '')
-                          .replace(/(市|州|盟|区|县)$/, '');
-      cleanCity = pinyinToChinese(cleanCity);
-
-      if (cleanCity && cleanCity !== p) {
-        // 如果未查到字典属于拼音，格式化首字母大写
-        if (/[a-zA-Z]/.test(cleanCity)) {
-          cleanCity = cleanCity.charAt(0).toUpperCase() + cleanCity.slice(1);
-        }
-        return `${p}${cleanCity}`;
+  // 1. 优先提取国内“省+市”
+  for (let prov of PROVINCES) {
+    if (rawStr.includes(prov)) {
+      let match = rawStr.match(new RegExp(`${prov}(?:省)?([\\u4e00-\\u9fa5]{2,4}(?:市|州|盟|区|县)?)`));
+      if (match && match[1]) {
+        let cityName = match[1].replace(/(市|州|盟|区|县)$/, '');
+        return `${prov}${cityName}`;
       }
-      return p;
+      return prov;
     }
   }
 
-  // 2. 普通文本过滤
-  let combined = `${prov}${city}`
+  // 2. 基础杂质清洗
+  let cleaned = rawStr
     .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房)/g, '')
     .replace(/^中国\s*/, '')
     .trim();
 
-  combined = pinyinToChinese(combined);
-
-  // 如果依然包含英文拼音，保留并规范首字母大写
-  if (/[a-zA-Z]/.test(combined)) {
-    return combined.charAt(0).toUpperCase() + combined.slice(1);
-  }
-
-  return combined || null;
+  return cleaned || null;
 }
 
-// 带超时的 Fetch 封装
-async function fetchWithTimeout(url, timeout = 1200) {
+// 带超时控制的 Fetch 封装
+async function fetchWithTimeout(url, timeout = 1500) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
   try {
@@ -126,47 +69,65 @@ async function fetchWithTimeout(url, timeout = 1200) {
 }
 
 // ==========================================
-// 2. 接口分层请求逻辑（优先国内原生地名）
+// 2. 全球/国内外 API 深度对接节点
 // ==========================================
 
-// [优先接口 1] 百度 OpenData（国内原生中文，精度最高）
+// [国内接口 1] 百度 OpenData（国内地级市最精准）
 async function apiBaidu(cleanIp) {
   const res = await fetchWithTimeout(`https://opendata.baidu.com/api.php?query=${encodeURIComponent(cleanIp)}&resource_id=6006&oe=utf8`);
   if (!res.ok) throw new Error('Baidu HTTP error');
   const data = await res.json();
-  const loc = data?.data?.[0]?.location || '';
-  const parsed = cleanAndExtractLocation('', loc);
-  if (parsed) return { country: 'CN', city: parsed };
+  const loc = data?.data?.[0]?.location;
+  const parsed = cleanAndExtractLocation(loc);
+  if (parsed) return { country: 'CN', city: parsed, score: evaluatePrecision(parsed) };
   throw new Error('Baidu parse failed');
 }
 
-// [备用接口 2] IP-API（支持 zh-CN 语言包）
-async function apiIpApi(cleanIp) {
-  const res = await fetchWithTimeout(`http://ip-api.com/json/${cleanIp}?fields=status,countryCode,regionName,city&lang=zh-CN`);
-  if (!res.ok) throw new Error('IpApi HTTP error');
+// [国内接口 2] IP.SB / Pconline 线路（包含太平洋及国内节点）
+async function apiIpSb(cleanIp) {
+  const res = await fetchWithTimeout(`https://api.ip.sb/geoip/${cleanIp}`);
+  if (!res.ok) throw new Error('IP.SB HTTP error');
   const data = await res.json();
-  if (data && data.status === 'success') {
-    const parsed = cleanAndExtractLocation(data.regionName, data.city);
-    if (parsed) return { country: data.countryCode || 'CN', city: parsed };
-  }
-  throw new Error('IpApi parse failed');
+  const region = data.region || '';
+  const city = data.city || '';
+  const parsed = cleanAndExtractLocation(`${region}${city}`);
+  if (parsed) return { country: data.country_code || 'CN', city: parsed, score: evaluatePrecision(parsed) };
+  throw new Error('IP.SB parse failed');
 }
 
-// [备用接口 3] IpWhois
+// [国外/太平洋接口 1] IpWhois（覆盖全球、美洲、太平洋群岛及亚洲）
 async function apiIpWhois(cleanIp) {
   const res = await fetchWithTimeout(`https://ipwhois.app/json/${cleanIp}?lang=zh-CN`);
   if (!res.ok) throw new Error('IpWhois HTTP error');
   const data = await res.json();
   if (data && data.success) {
-    const parsed = cleanAndExtractLocation(data.region, data.city);
-    if (parsed) return { country: data.country_code || 'CN', city: parsed };
+    const region = data.region || '';
+    const city = data.city || '';
+    const parsed = cleanAndExtractLocation(`${region}${city}`);
+    if (parsed) return { country: data.country_code || 'CN', city: parsed, score: evaluatePrecision(parsed) };
   }
   throw new Error('IpWhois parse failed');
 }
 
+// [国外/太平洋接口 2] IpApi（全球分布式高可用）
+async function apiIpApi(cleanIp) {
+  const res = await fetchWithTimeout(`http://ip-api.com/json/${cleanIp}?fields=status,countryCode,regionName,city&lang=zh-CN`);
+  if (!res.ok) throw new Error('IpApi HTTP error');
+  const data = await res.json();
+  if (data && data.status === 'success') {
+    const rawCity = data.city || data.regionName || '';
+    const parsed = cleanAndExtractLocation(rawCity);
+    if (parsed) return { country: data.countryCode || 'CN', city: parsed, score: evaluatePrecision(parsed) };
+  }
+  throw new Error('IpApi parse failed');
+}
+
+// 内存缓存字典，避免对相同 IP 重复发起并发查询
 const globalIpCache = new Map();
 
-// 优化后的决策调度器
+// ==========================================
+// 3. 多源并行竞速 + 精度筛选调度器
+// ==========================================
 async function resolveBestGlobalGeo(ip) {
   if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1') {
     return { country: 'CN', city: '局域网/本地' };
@@ -181,40 +142,47 @@ async function resolveBestGlobalGeo(ip) {
     return globalIpCache.get(cleanIp);
   }
 
-  // 1. 优先调用百度原生中文 API
-  try {
-    const baiduResult = await apiBaidu(cleanIp);
-    if (baiduResult && baiduResult.city) {
-      globalIpCache.set(cleanIp, baiduResult);
-      return baiduResult;
-    }
-  } catch (e) {
-    // 百度请求超时或失败时静默降级
-  }
-
-  // 2. 降级：并发调用其余 API 并进行拼音/中文过滤
-  const backupPromises = [
-    apiIpApi(cleanIp),
-    apiIpWhois(cleanIp)
+  // 同时（并发）对国内、国外、太平洋等全网所有 API 发起请求
+  const promises = [
+    apiBaidu(cleanIp),
+    apiIpSb(cleanIp),
+    apiIpWhois(cleanIp),
+    apiIpApi(cleanIp)
   ];
 
   try {
-    const results = await Promise.allSettled(backupPromises);
+    // 使用 Promise.allSettled 等待所有接口在 1.5 秒内返回，并挑选精度最高的结果
+    const results = await Promise.allSettled(promises);
+    let bestResult = null;
+
     for (const res of results) {
-      if (res.status === 'fulfilled' && res.value && res.value.city) {
-        globalIpCache.set(cleanIp, res.value);
-        return res.value;
+      if (res.status === 'fulfilled' && res.value) {
+        // 如果匹配到了满分结果（如：“陕西榆林”），直接采用并打断
+        if (res.value.score === 3) {
+          bestResult = res.value;
+          break;
+        }
+        // 否则择优保留分数最高的结果
+        if (!bestResult || res.value.score > bestResult.score) {
+          bestResult = res.value;
+        }
       }
     }
+
+    if (bestResult && bestResult.city) {
+      const finalData = { country: bestResult.country, city: bestResult.city };
+      globalIpCache.set(cleanIp, finalData);
+      return finalData;
+    }
   } catch (e) {
-    console.error("解析失败:", e);
+    console.error("并发竞速解析异常:", e);
   }
 
   return { country: 'CN', city: '中国' };
 }
 
 // ==========================================
-// 3. Cloudflare Pages 业务主入口
+// 4. Cloudflare Pages 业务主入口
 // ==========================================
 export async function onRequestGet(context) {
   const { request, env } = context;
@@ -245,11 +213,14 @@ export async function onRequestGet(context) {
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
+    // 批量并发处理 IP 定位
     const processDetails = async (rows) => {
       if (!rows || rows.length === 0) return [];
       
       return await Promise.all(rows.map(async (row) => {
         const realIp = row.ip || 'Unknown';
+        
+        // 调用国内外全网竞速定位函数
         const geo = await resolveBestGlobalGeo(realIp);
 
         return {
@@ -584,7 +555,7 @@ export async function onRequestGet(context) {
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问地区排行榜 (点击展开明细)
-              <span class="sub-tip">🌐 智能识别并全自动转为中文城市</span>
+              <span class="sub-tip">🌐 全球多源（国内外+太平洋节点）并发竞速高精度解析</span>
             </h2>
             <div style="overflow-x: auto;">
               <table>
