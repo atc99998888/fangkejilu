@@ -1,3 +1,29 @@
+// 辅助函数：针对 Cloudflare 误判的 IP（如上海/数据中心/IPv6/Unknown）调用高精度接口校准
+async function fetchAccurateGeo(ip) {
+  if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1') {
+    return null;
+  }
+  try {
+    // 使用 ip-api.com 进行实时校准（免费接口，支持 IPv4/IPv6，支持获取英文省市）
+    const res = await fetch(`http://ip-api.com/json/${ip}?lang=en`, {
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.status === 'success') {
+        return {
+          country: data.countryCode || 'CN',
+          // 优先使用 city，若 city 为空（常见于 IPv6 或部分移动网），自动退回使用 regionName（省份/自治区）
+          city: data.city || data.regionName || 'Unknown'
+        };
+      }
+    }
+  } catch (e) {
+    console.error("IP 精准校准失败:", e);
+  }
+  return null;
+}
+
 export async function onRequestGet(context) {
   const { request, env } = context;
 
@@ -31,12 +57,24 @@ export async function onRequestGet(context) {
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
-    // 数据标准化处理函数：确保 IP、国家、城市严格绑定不颠倒
-    const processDetails = (rows) => {
-      return (rows || []).map(row => {
+    // 数据标准化与校准函数：确保 IP、国家、城市严格匹配不错乱，并动态修正偏误归属
+    const processDetails = async (rows) => {
+      if (!rows || rows.length === 0) return [];
+      
+      return await Promise.all(rows.map(async (row) => {
         const ip = row.ip || row.client_ip || 'Unknown';
-        const country = row.country || row.country_code || 'Unknown';
-        const city = row.city || 'Unknown';
+        let country = row.country || row.country_code || 'Unknown';
+        let city = row.city || 'Unknown';
+
+        // 如果城市为 Unknown、被识别为容易错判的上海/北京机房，或是 IPv6 地址，尝试进行二次高精度校准
+        if (city === 'Unknown' || city === 'Shanghai' || city === 'Beijing' || ip.includes(':')) {
+          const accurateGeo = await fetchAccurateGeo(ip);
+          if (accurateGeo) {
+            country = accurateGeo.country;
+            city = accurateGeo.city;
+          }
+        }
+
         return {
           ...row,
           ip: ip,
@@ -46,7 +84,7 @@ export async function onRequestGet(context) {
           displayCountry: translateCountry(country),
           displayCity: translateCity(city)
         };
-      });
+      }));
     };
 
     // 2. 查询【今日】与【昨日】的全量明细记录
@@ -56,7 +94,7 @@ export async function onRequestGet(context) {
       WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
       ORDER BY id DESC
     `).all();
-    const todayDetails = processDetails(todayDetailsRaw?.results);
+    const todayDetails = await processDetails(todayDetailsRaw?.results);
 
     const yesterdayDetailsRaw = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
@@ -64,7 +102,7 @@ export async function onRequestGet(context) {
       WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
       ORDER BY id DESC
     `).all();
-    const yesterdayDetails = processDetails(yesterdayDetailsRaw?.results);
+    const yesterdayDetails = await processDetails(yesterdayDetailsRaw?.results);
 
     // 3. 获取最近 7 天每日访问量
     const last7DaysRes = await env.DB.prepare(`
@@ -110,25 +148,22 @@ export async function onRequestGet(context) {
       yesterdayDomainMap[item.domain] = item.domain_total;
     });
 
-    // 5. 查询【今日】与【昨日】城市数据（移除 LIMIT 限制，排列所有城市）
-    const cityRankRes = await env.DB.prepare(`
-      SELECT country, city, COUNT(*) as city_total 
-      FROM visits 
-      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
-      GROUP BY country, city 
-      ORDER BY city_total DESC
-    `).all();
-    const cityRank = cityRankRes?.results || [];
+    // 5. 构建城市排行榜（使用校准后的今日及昨日明细重新聚合，彻底解决分类不准问题）
+    const cityRankMap = {};
+    todayDetails.forEach(item => {
+      const key = `${item.country}_${item.city}`;
+      if (!cityRankMap[key]) {
+        cityRankMap[key] = { country: item.country, city: item.city, city_total: 0 };
+      }
+      cityRankMap[key].city_total += 1;
+    });
 
-    const yesterdayCityRes = await env.DB.prepare(`
-      SELECT country, city, COUNT(*) as city_total 
-      FROM visits 
-      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
-      GROUP BY country, city
-    `).all();
+    const cityRank = Object.values(cityRankMap).sort((a, b) => b.city_total - a.city_total);
+
     const yesterdayCityMap = {};
-    (yesterdayCityRes?.results || []).forEach(item => {
-      yesterdayCityMap[`${item.country}_${item.city}`] = item.city_total;
+    yesterdayDetails.forEach(item => {
+      const key = `${item.country}_${item.city}`;
+      yesterdayCityMap[key] = (yesterdayCityMap[key] || 0) + 1;
     });
 
     // 渲染通用顶部卡片明细表格
@@ -150,7 +185,7 @@ export async function onRequestGet(context) {
     const todayTableRowsHtml = renderTableRows(todayDetails);
     const yesterdayTableRowsHtml = renderTableRows(yesterdayDetails);
 
-    // 构建【按域名归类】和【按城市归类】的数据映射，方便嵌入排行榜展开层
+    // 构建【按域名归类】和【按城市归类】的数据映射
     const domainDetailsMap = {};
     const cityDetailsMap = {};
 
@@ -205,7 +240,7 @@ export async function onRequestGet(context) {
       `;
     }).join('');
 
-    // 2. 生成可展开的城市排行榜 HTML (含昨日对比，已全量列出)
+    // 2. 生成可展开的城市排行榜 HTML (含昨日对比，全量列出)
     let cityRankHtml = cityRank.map((item, index) => {
       const cityKey = `${item.country}_${item.city}`;
       const list = cityDetailsMap[cityKey] || [];
@@ -601,6 +636,16 @@ function translateCountry(code) {
 function translateCity(city) {
   if (!city || city === 'Unknown') return '未知城市';
   const cityMap = {
+    // 省份补充映射 (用于 IPv6 或高精度接口返回省名的情况)
+    'Shanxi': '山西', 'Shaanxi': '陕西', 'Sichuan': '四川', 'Guangdong': '广东',
+    'Zhejiang': '浙江', 'Jiangsu': '江苏', 'Shandong': '山东', 'Henan': '河南',
+    'Hubei': '湖北', 'Hunan': '湖南', 'Fujian': '福建', 'Anhui': '安徽',
+    'Hebei': '河北', 'Liaoning': '辽宁', 'Jilin': '吉林', 'Heilongjiang': '黑龙江',
+    'Jiangxi': '江西', 'Gansu': '甘肃', 'Qinghai': '青海', 'Guangxi': '广西',
+    'Yunnan': '云南', 'Guizhou': '贵州', 'Hainan': '海南', 'Inner Mongolia': '内蒙古',
+    'Xinjiang': '新疆', 'Tibet': '西藏', 'Ningxia': '宁夏',
+
+    // 主要城市映射
     'Beijing': '北京', 'Shanghai': '上海', 'Tianjin': '天津', 'Chongqing': '重庆',
     'Hong Kong': '香港', 'Macau': '澳门', 'Taipei': '台北', 'Kaohsiung': '高雄',
     'Guangzhou': '广州', 'Shenzhen': '深圳', 'Zhuhai': '珠海', 'Shantou': '汕头',
