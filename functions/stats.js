@@ -1,76 +1,158 @@
 // ==========================================
-// 1. 行政区划与城市深度映射字典 (解决精准定位归一化)
+// 1. 深度城市拼音/英文与标准中文映射字典
 // ==========================================
-const PROVINCE_MAP = {
-  'Shaanxi': '陕西', 'Shanxi': '山西', 'Shandong': '山东', 'Henan': '河南',
-  'Hebei': '河北', 'Hunan': '湖南', 'Hubei': '湖北', 'Guangdong': '广东',
-  'Guangxi': '广西', 'Sichuan': '四川', 'Zhejiang': '浙江', 'Jiangsu': '江苏',
-  'Fujian': '福建', 'Liaoning': '辽宁', 'Jilin': '吉林', 'Heilongjiang': '黑龙江',
-  'Yunnan': '云南', 'Guizhou': '贵州', 'Gansu': '甘肃', 'Qinghai': '青海',
-  'Inner Mongolia': '内蒙古', 'Xinjiang': '新疆', 'Tibet': '西藏', 'Hainan': '海南',
-  'Ningxia': '宁夏', 'Beijing': '北京', 'Shanghai': '上海', 'Tianjin': '天津', 'Chongqing': '重庆'
+const CITY_DICTIONARY = {
+  // 陕西省
+  'yulin': '陕西榆林', 'xian': '陕西西安', 'baoji': '陕西宝鸡', 'xianyang': '陕西咸阳',
+  'weinan': '陕西渭南', 'yanan': '陕西延安', 'hanzhong': '陕西汉中', 'ankang': '陕西安康',
+  'shangluo': '陕西商洛', 'tongchuan': '陕西铜川',
+  // 山东省
+  'jinan': '山东济南', 'qingdao': '山东青岛', 'zibo': '山东淄博', 'yantai': '山东烟台',
+  'weifang': '山东潍坊', 'jining': '山东济宁', 'taian': '山东泰安', 'linyi': '山东临沂',
+  // 广东省
+  'guangzhou': '广东广州', 'shenzhen': '广东深圳', 'zhuhai': '广东珠海', 'foshan': '广东佛山',
+  'dongguan': '广东东莞', 'zhongshan': '广东中山', 'huizhou': '广东惠州',
+  // 浙江省
+  'hangzhou': '浙江杭州', 'ningbo': '浙江宁波', 'wenzhou': '浙江温州', 'jiaxing': '浙江嘉兴',
+  'shaoxing': '浙江绍兴', 'jinhua': '浙江金华', 'taizhou': '浙江台州',
+  // 江苏省
+  'nanjing': '江苏南京', 'suzhou': '江苏苏州', 'wuxi': '江苏无锡', 'changzhou': '江苏常州',
+  'nantong': '江苏南通', 'yangzhou': '江苏扬州', 'xuzhou': '江苏徐州',
+  // 河南省
+  'zhengzhou': '河南郑州', 'luoyang': '河南洛阳', 'kaifeng': '河南开封', 'xinxiang': '河南新乡',
+  // 四川省
+  'chengdu': '四川成都', 'mianyang': '四川绵阳', 'nanchong': '四川南充', 'yibin': '四川宜宾',
+  // 湖北省
+  'wuhan': '湖北武汉', 'yichang': '湖北宜昌', 'xiangyang': '湖北襄阳',
+  // 北京/上海/天津/重庆
+  'beijing': '北京', 'shanghai': '上海', 'tianjin': '天津', 'chongqing': '重庆'
 };
 
-const CITY_MAP = {
-  // 陕西省各地级市精准映射
-  'Yulin': '榆林', 'Xi\'an': '西安', 'Xian': '西安', 'Baoji': '宝鸡', 'Xianyang': '咸阳',
-  'Weinan': '渭南', 'Yan\'an': '延安', 'Yanan': '延安', 'Hanzhong': '汉中', 
-  'Ankang': '安康', 'Shangluo': '商洛', 'Tongchuan': '铜川',
-  
-  // 常见重点城市映射
-  'Guangzhou': '广州', 'Shenzhen': '深圳', 'Hangzhou': '杭州', 'Nanjing': '南京',
-  'Chengdu': '成都', 'Wuhan': '武汉', 'Qingdao': '青岛', 'Jinan': '济南',
-  'Suzhou': '苏州', 'Wuxi': '无锡', 'Ningbo': '宁波', 'Fuzhou': '福州', 'Xiamen': '厦门'
-};
-
-// 内存缓存，提升重复访问解析性能
+// 内存缓存，避免对同一 IP 重复发起网络解析
 const ipCache = new Map();
 
 // ==========================================
-// 2. 第一性原理：Cloudflare 原生地理数据提取函数
+// 2. 核心：提取真实省市结构（避免被降级为未知地区）
 // ==========================================
-function getGeoFromCF(request, ip) {
-  if (!ip || ip === 'Unknown' || ip.startsWith('127.') || ip.startsWith('192.168.') || ip.startsWith('10.')) {
+function parseLocationString(rawStr) {
+  if (!rawStr) return null;
+
+  const provinces = [
+    '陕西', '山西', '山东', '河南', '河北', '湖南', '湖北', '广东', '广西', 
+    '四川', '浙江', '江苏', '福建', '辽宁', '吉林', '黑龙江', '云南', '贵州', 
+    '甘肃', '青海', '内蒙古', '新疆', '西藏', '海南', '宁夏', '江西', '安徽', '台湾'
+  ];
+
+  // 1. 尝试匹配省+市（例如“陕西省榆林市” -> “陕西榆林”）
+  for (let prov of provinces) {
+    if (rawStr.includes(prov)) {
+      let match = rawStr.match(new RegExp(`${prov}(?:省)?([\\u4e00-\\u9fa5]{2,4}(?:市|州|盟)?)`));
+      if (match && match[1]) {
+        let cityName = match[1].replace(/(市|州|盟)$/, '');
+        return `${prov}${cityName}`;
+      }
+      return prov;
+    }
+  }
+
+  // 2. 匹配拼音/英文词典
+  const lowerStr = rawStr.toLowerCase();
+  for (let key in CITY_DICTIONARY) {
+    if (lowerStr.includes(key)) {
+      return CITY_DICTIONARY[key];
+    }
+  }
+
+  // 3. 基础清洗杂质
+  let cleaned = rawStr
+    .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房)/g, '')
+    .replace(/^中国\s*/, '')
+    .trim();
+
+  return cleaned || null;
+}
+
+// 带超时控制的 fetch 封装
+async function fetchWithTimeout(url, timeout = 1200) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (e) {
+    clearTimeout(id);
+    throw e;
+  }
+}
+
+// ==========================================
+// 3. 真实 IP 多源并发解析器
+// ==========================================
+async function resolveRealIpGeo(ip) {
+  if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1') {
     return { country: 'CN', city: '局域网/本地' };
   }
 
-  const cleanIp = ip.split(',')[0].trim();
+  let cleanIp = ip.split(',')[0].split('/')[0].trim();
+  if (cleanIp.startsWith('192.168.') || cleanIp.startsWith('10.') || cleanIp.startsWith('172.16.')) {
+    return { country: 'CN', city: '局域网/本地' };
+  }
+
   if (ipCache.has(cleanIp)) {
     return ipCache.get(cleanIp);
   }
 
-  // 直接读取 Cloudflare 边缘节点在 TCP 握手阶段注入的精准地理对象
-  const cf = request.cf || {};
-
-  const rawCountry = cf.country || 'CN';
-  const rawRegion = cf.region || '';
-  const rawCity = cf.city || '';
-
-  let displayCity = '';
-
-  // 1. 中文归一化处理：优先尝试从字典匹配省份与城市
-  const parsedProvince = PROVINCE_MAP[rawRegion] || rawRegion;
-  const parsedCity = CITY_MAP[rawCity] || rawCity;
-
-  if (parsedProvince && parsedCity) {
-    if (parsedProvince === parsedCity) {
-      displayCity = parsedCity; // 直辖市如“北京”
-    } else {
-      displayCity = `${parsedProvince}${parsedCity}`; // 例如：“陕西榆林”
+  // Provider 1: 百度 OpenData（国内精准度最高，地级市覆盖全）
+  const providerBaidu = async () => {
+    const res = await fetchWithTimeout(`https://opendata.baidu.com/api.php?query=${encodeURIComponent(cleanIp)}&resource_id=6006&oe=utf8`);
+    if (res.ok) {
+      const data = await res.json();
+      const loc = data?.data?.[0]?.location;
+      const parsed = parseLocationString(loc);
+      if (parsed) return { country: 'CN', city: parsed };
     }
-  } else if (parsedCity) {
-    displayCity = parsedCity;
-  } else if (parsedProvince) {
-    displayCity = parsedProvince;
-  } else {
-    displayCity = '中国';
-  }
-
-  // 整理数据结构
-  const result = {
-    country: rawCountry,
-    city: cleanCarrierInfo(displayCity)
+    throw new Error('Baidu failed');
   };
+
+  // Provider 2: IpWhois
+  const providerIpWhois = async () => {
+    const res = await fetchWithTimeout(`https://ipwhois.app/json/${cleanIp}?lang=zh-CN`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success) {
+        const region = data.region || '';
+        const city = data.city || '';
+        const combined = `${region}${city}`;
+        const parsed = parseLocationString(combined);
+        if (parsed) return { country: data.country_code || 'CN', city: parsed };
+      }
+    }
+    throw new Error('IpWhois failed');
+  };
+
+  // Provider 3: IpApi
+  const providerIpApi = async () => {
+    const res = await fetchWithTimeout(`http://ip-api.com/json/${cleanIp}?fields=status,countryCode,regionName,city`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.status === 'success') {
+        const rawCity = data.city || data.regionName || '';
+        const parsed = parseLocationString(rawCity);
+        if (parsed) return { country: data.countryCode || 'CN', city: parsed };
+      }
+    }
+    throw new Error('IpApi failed');
+  };
+
+  let result = { country: 'CN', city: '中国' };
+
+  try {
+    // 竞速模式：并行发起请求，取最快且有效的解析结果
+    result = await Promise.any([providerBaidu(), providerIpWhois(), providerIpApi()]);
+  } catch (e) {
+    result = { country: 'CN', city: '中国' };
+  }
 
   if (result.city && result.city !== '中国') {
     ipCache.set(cleanIp, result);
@@ -79,17 +161,8 @@ function getGeoFromCF(request, ip) {
   return result;
 }
 
-// 辅助清洗：确保无运营商杂质
-function cleanCarrierInfo(locationStr) {
-  if (!locationStr) return '';
-  return locationStr
-    .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|鹏博士|阿里云|腾讯云|华为云|百度云|IDC)/g, '')
-    .replace(/^中国\s*/, '')
-    .trim();
-}
-
 // ==========================================
-// 3. Cloudflare Pages 主入口处理
+// 4. Cloudflare Pages 控制台入口
 // ==========================================
 export async function onRequestGet(context) {
   const { request, env } = context;
@@ -106,64 +179,67 @@ export async function onRequestGet(context) {
   }
 
   try {
-    // 建表
     await env.DB.exec("CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL, ip TEXT DEFAULT 'Unknown', city TEXT DEFAULT 'Unknown', country TEXT DEFAULT 'Unknown', visit_time DATETIME DEFAULT CURRENT_TIMESTAMP);");
 
-    // 查询今日总 PV
     const todayRes = await env.DB.prepare(`
       SELECT COUNT(*) as count FROM visits 
       WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
     `).first();
     const todayVisits = todayRes?.count || 0;
 
-    // 查询昨日总 PV
     const yesterdayRes = await env.DB.prepare(`
       SELECT COUNT(*) as count FROM visits 
       WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
-    // 批量处理并补充精准地理信息
-    const processDetails = (rows) => {
+    // 针对数据库中拿到的每一条记录的真实 IP 进行二次精准解析
+    const processDetails = async (rows) => {
       if (!rows || rows.length === 0) return [];
       
-      return rows.map(row => {
-        const ip = row.ip || row.client_ip || 'Unknown';
+      return await Promise.all(rows.map(async (row) => {
+        const realIp = row.ip || 'Unknown';
         
-        // 基于 Cloudflare 边缘节点数据直接定位
-        const accurateGeo = getGeoFromCF(request, ip);
+        let country = row.country || 'CN';
+        let city = row.city;
+
+        // 对数据库中的真实 IP 发起外网分布式高精解析
+        if (realIp !== 'Unknown') {
+          const accurateGeo = await resolveRealIpGeo(realIp);
+          country = accurateGeo.country;
+          city = accurateGeo.city;
+        } else {
+          city = parseLocationString(city) || '中国';
+        }
 
         return {
           ...row,
-          ip: ip,
-          country: accurateGeo.country,
-          city: accurateGeo.city,
-          displayIp: escapeHtml(ip),
-          displayCountry: translateCountry(accurateGeo.country),
-          displayCity: accurateGeo.city
+          ip: realIp,
+          country: country,
+          city: city,
+          displayIp: escapeHtml(realIp),
+          displayCountry: translateCountry(country),
+          displayCity: city
         };
-      });
+      }));
     };
 
-    // 今日全量明细
     const todayDetailsRaw = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
       FROM visits 
       WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
       ORDER BY id DESC
     `).all();
-    const todayDetails = processDetails(todayDetailsRaw?.results);
+    const todayDetails = await processDetails(todayDetailsRaw?.results);
 
-    // 昨日全量明细
     const yesterdayDetailsRaw = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
       FROM visits 
       WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
       ORDER BY id DESC
     `).all();
-    const yesterdayDetails = processDetails(yesterdayDetailsRaw?.results);
+    const yesterdayDetails = await processDetails(yesterdayDetailsRaw?.results);
 
-    // 最近 7 天趋势
     const last7DaysRes = await env.DB.prepare(`
       SELECT DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) as date, COUNT(*) as count 
       FROM visits 
@@ -186,7 +262,6 @@ export async function onRequestGet(context) {
       });
     }
 
-    // 域名排行
     const domainRankRes = await env.DB.prepare(`
       SELECT domain, COUNT(*) as domain_total 
       FROM visits 
@@ -207,7 +282,6 @@ export async function onRequestGet(context) {
       yesterdayDomainMap[item.domain] = item.domain_total;
     });
 
-    // 城市排行与统计映射
     const cityRankMap = {};
     todayDetails.forEach(item => {
       const key = `${item.country}_${item.displayCity}`;
@@ -470,7 +544,7 @@ export async function onRequestGet(context) {
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问地区排行榜 (点击展开明细)
-              <span class="sub-tip">⚡ Cloudflare 边缘节点零延迟高精匹配</span>
+              <span class="sub-tip">⚡ 真实 IP 多源外网并行竞速解析</span>
             </h2>
             <div style="overflow-x: auto;">
               <table>
@@ -602,7 +676,6 @@ export async function onRequestGet(context) {
   }
 }
 
-// 辅助逻辑与中文转码
 function decodePunycodePart(input) {
   const BASE = 36, TMIN = 1, TMAX = 26, SKEW = 38, DAMP = 700, INITIAL_BIAS = 72, INITIAL_N = 128;
   function adapt(delta, numPoints, firstTime) {
