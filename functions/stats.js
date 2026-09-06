@@ -26,17 +26,22 @@ function evaluatePrecision(locationStr) {
   return 0;
 }
 
-// 统一提取省市名称，去除“省”、“市”、“电信”、“机房”等杂质
+// 统一提取省市名称，去除“省”、“电信”、“机房”等杂质（优化：完整保留城市名，不截断）
 function cleanAndExtractLocation(rawStr) {
   if (!rawStr) return null;
 
   // 1. 优先提取国内“省+市”
   for (let prov of PROVINCES) {
     if (rawStr.includes(prov)) {
-      let match = rawStr.match(new RegExp(`${prov}(?:省)?([\\u4e00-\\u9fa5]{2,4}(?:市|州|盟|区|县)?)`));
+      // 提取省份后的完整城市名称
+      let match = rawStr.match(new RegExp(`${prov}(?:省)?([\\u4e00-\\u9fa5]+)`));
       if (match && match[1]) {
-        let cityName = match[1].replace(/(市|州|盟|区|县)$/, '');
-        return `${prov}${cityName}`;
+        let cityName = match[1]
+          .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房)/g, '')
+          .trim();
+        if (cityName) {
+          return `${prov}${cityName}`;
+        }
       }
       return prov;
     }
@@ -446,8 +451,9 @@ export async function onRequestGet(context) {
           .chart-container { position: relative; width: 100%; height: 220px; margin-top: 10px; }
           canvas { width: 100%!important; height: 100%!important; }
 
-          table { width: 100%; border-collapse: collapse; margin-top: 4px; }
-          th, td { border: 1px solid #eef0f3; padding: 10px; text-align: left; font-size: 13px; }
+          .table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+          table { width: 100%; border-collapse: collapse; margin-top: 4px; white-space: nowrap; }
+          th, td { border: 1px solid #eef0f3; padding: 10px; text-align: left; font-size: 13px; white-space: nowrap; }
           th { background-color: #f8f9fa; color: #555; }
 
           tr.clickable-row { cursor: pointer; transition: background-color 0.15s ease; }
@@ -455,7 +461,7 @@ export async function onRequestGet(context) {
           .arrow-icon { font-size: 10px; color: #888; margin-left: 6px; display: inline-block; transition: transform 0.2s ease; }
 
           .detail-cell { padding: 0!important; background-color: #fcfdfe!important; }
-          .inner-table-wrapper { padding: 12px 16px; background: #f4f8fb; border-bottom: 2px solid #e1e9f0; }
+          .inner-table-wrapper { padding: 12px 16px; background: #f4f8fb; border-bottom: 2px solid #e1e9f0; overflow-x: auto; }
           .inner-title { font-size: 12px; color: #444; margin-bottom: 8px; font-weight: 500; }
           .inner-table-wrapper table { background: #fff; }
           .inner-table-wrapper th { background-color: #eaf2f9; }
@@ -494,7 +500,7 @@ export async function onRequestGet(context) {
               📋 今日全量访问明细（共 ${todayVisits} 条记录）
               <span class="sub-tip">⏱️ 今日 00:00 至今</span>
             </h2>
-            <div style="overflow-x: auto; max-height: 400px;">
+            <div class="table-responsive" style="max-height: 400px;">
               <table>
                 <thead>
                   <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>省份 / 城市</th></tr>
@@ -511,7 +517,7 @@ export async function onRequestGet(context) {
               📜 昨日全量访问明细（共 ${yesterdayVisits} 条记录）
               <span class="sub-tip" style="color: #8e44ad;">⏱️ 昨日全天</span>
             </h2>
-            <div style="overflow-x: auto; max-height: 400px;">
+            <div class="table-responsive" style="max-height: 400px;">
               <table>
                 <thead>
                   <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>省份 / 城市</th></tr>
@@ -535,7 +541,7 @@ export async function onRequestGet(context) {
               🏆 今日域名流量排行榜 (点击展开明细)
               <span class="sub-tip">⏱️ 包含昨日数据对比</span>
             </h2>
-            <div style="overflow-x: auto;">
+            <div class="table-responsive">
               <table>
                 <thead>
                   <tr>
@@ -557,7 +563,7 @@ export async function onRequestGet(context) {
               🏙️ 热门访问地区排行榜 (点击展开明细)
               <span class="sub-tip">🌐 全球多源（国内外+太平洋节点）并发竞速高精度解析</span>
             </h2>
-            <div style="overflow-x: auto;">
+            <div class="table-responsive">
               <table>
                 <thead>
                   <tr>
