@@ -54,7 +54,7 @@ export async function onRequestGet(context) {
       }));
 
       const count = todayRes?.count || 0;
-      const income = count * 8; // 计算实时收入
+      const income = count * 8; 
 
       return new Response(JSON.stringify({
         todayCount: count,
@@ -66,7 +66,7 @@ export async function onRequestGet(context) {
       });
     }
 
-    // 【HTML 渲染】：直接打开页面时输出的中控大屏 UI
+    // 【HTML 渲染】：中控大屏主界面
     const todayRes = await env.DB.prepare(`
       SELECT COUNT(*) as count FROM visits 
       WHERE ${bjDateExpr} = ${todayDateExpr}
@@ -143,6 +143,7 @@ export async function onRequestGet(context) {
           body {
             margin: 0;
             padding: 0;
+            padding-bottom: 70px; /* 为底部常驻开关留出空间 */
             background-color: #06090e;
             color: #ffffff;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -187,23 +188,45 @@ export async function onRequestGet(context) {
           .header-right { display: flex; align-items: center; gap: 20px; }
           .clock-box { font-family: monospace; font-size: 16px; color: #00f0ff; text-shadow: 0 0 8px rgba(0,240,255,0.5); }
           
-          /* 音效控制按钮 */
+          /* 底部常驻悬浮音效控制开关 */
+          .bottom-sound-bar {
+            position: fixed;
+            bottom: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10001;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+          }
           .sound-toggle {
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(0, 240, 255, 0.3);
-            color: #00f0ff;
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 12px;
+            background: rgba(13, 20, 32, 0.9);
+            border: 1px solid rgba(255, 215, 0, 0.5);
+            color: #ffd700;
+            padding: 8px 20px;
+            border-radius: 30px;
+            font-size: 13px;
+            font-weight: bold;
             cursor: pointer;
             display: flex;
             align-items: center;
-            gap: 6px;
-            transition: all 0.2s;
+            gap: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), 0 0 15px rgba(255, 215, 0, 0.2);
+            backdrop-filter: blur(8px);
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
             user-select: none;
           }
-          .sound-toggle:hover { background: rgba(0, 240, 255, 0.2); }
-          .sound-toggle.muted { color: #8a99ad; border-color: rgba(255, 255, 255, 0.2); }
+          .sound-toggle:hover {
+            transform: scale(1.05);
+            border-color: #ffd700;
+            box-shadow: 0 6px 25px rgba(255, 215, 0, 0.4);
+          }
+          .sound-toggle.muted {
+            color: #8a99ad;
+            border-color: rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            background: rgba(13, 20, 32, 0.8);
+          }
 
           .grid-container {
             display: grid;
@@ -277,7 +300,7 @@ export async function onRequestGet(context) {
             text-shadow: 0 0 25px rgba(255, 215, 0, 0.6);
           }
 
-          /* 极具弹性的浮动夸张动画 */
+          /* 弹性浮动动画 */
           .gold-pop {
             animation: goldShockwave 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards !important;
           }
@@ -287,7 +310,7 @@ export async function onRequestGet(context) {
             100% { transform: scale(1); filter: drop-shadow(0 0 0px #ffd700); }
           }
 
-          /* 屏幕中央漂浮收益特效 (新增收入) */
+          /* 屏幕中央漂浮收益特效 (显示新增收入) */
           .cash-float-container {
             position: fixed;
             top: 40%;
@@ -457,9 +480,6 @@ export async function onRequestGet(context) {
             <h1>全球直播流量大数据控制中心</h1>
           </div>
           <div class="header-right">
-            <button class="sound-toggle" id="soundBtn" onclick="toggleSound()">
-              <span id="soundIcon">🔔</span> <span id="soundText">音效已开启</span>
-            </button>
             <div class="clock-box" id="liveClock">00:00:00</div>
           </div>
         </div>
@@ -518,8 +538,15 @@ export async function onRequestGet(context) {
           </div>
         </div>
 
+        <!-- 底部常驻悬浮控制按钮 -->
+        <div class="bottom-sound-bar">
+          <button class="sound-toggle" id="soundBtn" onclick="toggleSound()">
+            <span id="soundIcon">🔊</span> <span id="soundText">进账提示音：已开启</span>
+          </button>
+        </div>
+
         <script>
-          // =============== 音效控制 (Web Audio API) ===============
+          // =============== 音效控制 (全新高质感双音阶清脆提示音) ===============
           let soundEnabled = true;
           let audioCtx = null;
 
@@ -536,17 +563,17 @@ export async function onRequestGet(context) {
             const text = document.getElementById('soundText');
             if (soundEnabled) {
               btn.classList.remove('muted');
-              icon.innerText = '🔔';
-              text.innerText = '音效已开启';
+              icon.innerText = '🔊';
+              text.innerText = '进账提示音：已开启';
               playCoinSound();
             } else {
               btn.classList.add('muted');
-              icon.innerText = '🔕';
-              text.innerText = '静音模式';
+              icon.innerText = '🔇';
+              text.innerText = '进账提示音：已关闭';
             }
           }
 
-          // 播放金币清脆进账清脆清响
+          // 播放高质感金币清脆提示音
           function playCoinSound() {
             if (!soundEnabled) return;
             try {
@@ -554,21 +581,31 @@ export async function onRequestGet(context) {
               if (audioCtx.state === 'suspended') audioCtx.resume();
               
               const now = audioCtx.currentTime;
-              const osc = audioCtx.createOscillator();
-              const gain = audioCtx.createGain();
 
-              osc.type = 'sine';
-              osc.frequency.setValueAtTime(987.77, now); // B5 调高音
-              osc.frequency.exponentialRampToValueAtTime(1318.51, now + 0.08); // E6 调更高音
+              // 第 1 个高音阶 (A5 880Hz)
+              const osc1 = audioCtx.createOscillator();
+              const gain1 = audioCtx.createGain();
+              osc1.type = 'sine';
+              osc1.frequency.setValueAtTime(880, now);
+              gain1.gain.setValueAtTime(0.25, now);
+              gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+              osc1.connect(gain1);
+              gain1.connect(audioCtx.destination);
+              osc1.start(now);
+              osc1.stop(now + 0.12);
 
-              gain.gain.setValueAtTime(0.3, now);
-              gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+              // 第 2 个极高超清音阶 (A6 1760Hz - 延迟50ms发出，形成清脆层次感)
+              const osc2 = audioCtx.createOscillator();
+              const gain2 = audioCtx.createGain();
+              osc2.type = 'sine';
+              osc2.frequency.setValueAtTime(1760, now + 0.05);
+              gain2.gain.setValueAtTime(0.35, now + 0.05);
+              gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+              osc2.connect(gain2);
+              gain2.connect(audioCtx.destination);
+              osc2.start(now + 0.05);
+              osc2.stop(now + 0.35);
 
-              osc.connect(gain);
-              gain.connect(audioCtx.destination);
-
-              osc.start(now);
-              osc.stop(now + 0.35);
             } catch(e){}
           }
 
@@ -663,7 +700,7 @@ export async function onRequestGet(context) {
 
           let lastSeenId = ${latestDetails[0] ? (latestDetails[0].id || 0) : 0};
 
-          // 触发中央飘字特效 (显示"新增收入")
+          // 触发中央漂浮收益特效
           function triggerCashEffect() {
             const box = document.getElementById('cashFloatBox');
             if (!box) return;
@@ -727,7 +764,7 @@ export async function onRequestGet(context) {
                   showToast(newest);
                   triggerCashEffect(); // 飘字
                   spawnCoinRain();     // 撒金币雨
-                  playCoinSound();     // 播放进账音效
+                  playCoinSound();     // 播放新金币声
 
                   const stream = document.getElementById('feedStream');
                   if (stream) {
