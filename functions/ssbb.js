@@ -543,7 +543,7 @@ export async function onRequestGet(context) {
         </div>
 
         <script>
-          // =============== 音效控制 (2.2秒长延音金币到账全效音，解决浏览器Autoplay拦截) ===============
+          // =============== 音效控制 (游戏金币散落音效 - 快速多重颗粒颗粒感+长延音余响) ===============
           let soundEnabled = true;
           let audioCtx = null;
 
@@ -577,7 +577,7 @@ export async function onRequestGet(context) {
             }
           }
 
-          // 播放 2.2 秒长延音清脆到账音效
+          // 播放模拟游戏金币散落颗粒感的清脆进账音效（整体持续 ~2.2 秒）
           function playCoinSound() {
             if (!soundEnabled) return;
             try {
@@ -586,41 +586,53 @@ export async function onRequestGet(context) {
               
               const now = audioCtx.currentTime;
 
-              // 音阶 1: 金币落地前奏 (880Hz)
-              const osc1 = audioCtx.createOscillator();
-              const gain1 = audioCtx.createGain();
-              osc1.type = 'sine';
-              osc1.frequency.setValueAtTime(880, now);
-              gain1.gain.setValueAtTime(0.3, now);
-              gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
-              osc1.connect(gain1);
-              gain1.connect(audioCtx.destination);
-              osc1.start(now);
-              osc1.stop(now + 0.15);
+              // 预设 7 枚金币快速连续散落碰撞的时序和音高
+              const coinDrops = [
+                { delay: 0, freq: 1400, dur: 0.08, vol: 0.25 },
+                { delay: 0.04, freq: 1850, dur: 0.09, vol: 0.3 },
+                { delay: 0.08, freq: 1250, dur: 0.07, vol: 0.2 },
+                { delay: 0.12, freq: 2100, dur: 0.1,  vol: 0.35 },
+                { delay: 0.17, freq: 1600, dur: 0.08, vol: 0.28 },
+                { delay: 0.22, freq: 2350, dur: 0.12, vol: 0.4 },
+                { delay: 0.28, freq: 1950, dur: 0.15, vol: 0.3 }
+              ];
 
-              // 音阶 2: 金币撞击清脆音 (1320Hz)
-              const osc2 = audioCtx.createOscillator();
-              const gain2 = audioCtx.createGain();
-              osc2.type = 'sine';
-              osc2.frequency.setValueAtTime(1320, now + 0.08);
-              gain2.gain.setValueAtTime(0.4, now + 0.08);
-              gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
-              osc2.connect(gain2);
-              gain2.connect(audioCtx.destination);
-              osc2.start(now + 0.08);
-              osc2.stop(now + 0.3);
+              // 1. 循环触发快速散落金币撞击音粒
+              coinDrops.forEach(coin => {
+                const startTime = now + coin.delay;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
 
-              // 音阶 3: 高频金币回响 + 2.2 秒缓慢余音衰减 (1760Hz)
-              const osc3 = audioCtx.createOscillator();
-              const gain3 = audioCtx.createGain();
-              osc3.type = 'sine';
-              osc3.frequency.setValueAtTime(1760, now + 0.15);
-              gain3.gain.setValueAtTime(0.45, now + 0.15);
-              gain3.gain.exponentialRampToValueAtTime(0.0001, now + 2.2);
-              osc3.connect(gain3);
-              gain3.connect(audioCtx.destination);
-              osc3.start(now + 0.15);
-              osc3.stop(now + 2.2);
+                osc.type = 'sine';
+                // 给频率加少量随机抖动，让每次散落的声音更自然
+                const randomFreq = coin.freq + (Math.random() * 80 - 40);
+                osc.frequency.setValueAtTime(randomFreq, startTime);
+
+                // 快速衰减形成“啪嗒/叮”的硬币撞击颗粒感
+                gain.gain.setValueAtTime(coin.vol, startTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, startTime + coin.dur);
+
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                osc.start(startTime);
+                osc.stop(startTime + coin.dur);
+              });
+
+              // 2. 长延音金属共振尾音（提供整体长达 2.2 秒的满足感）
+              const resonanceOsc = audioCtx.createOscillator();
+              const resonanceGain = audioCtx.createGain();
+
+              resonanceOsc.type = 'sine';
+              resonanceOsc.frequency.setValueAtTime(1760, now + 0.2); // A6 高音阶
+              resonanceGain.gain.setValueAtTime(0.3, now + 0.2);
+              resonanceGain.gain.exponentialRampToValueAtTime(0.0001, now + 2.2);
+
+              resonanceOsc.connect(resonanceGain);
+              resonanceGain.connect(audioCtx.destination);
+
+              resonanceOsc.start(now + 0.2);
+              resonanceOsc.stop(now + 2.2);
 
             } catch(e) {
               console.error("Audio error:", e);
@@ -782,7 +794,7 @@ export async function onRequestGet(context) {
                   showToast(newest);
                   triggerCashEffect(); // 飘字
                   spawnCoinRain();     // 撒金币雨
-                  playCoinSound();     // 播放 2.2 秒到账音效
+                  playCoinSound();     // 播放游戏金币散落音效
 
                   const stream = document.getElementById('feedStream');
                   if (stream) {
