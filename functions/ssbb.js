@@ -543,7 +543,7 @@ export async function onRequestGet(context) {
         </div>
 
         <script>
-          // =============== 音效控制 (多金币快速碰撞、洒落、哗啦啦金币雨音效) ===============
+          // =============== 音效控制 (2.5秒专业收银机/金钱进账合成音效) ===============
           let soundEnabled = true;
           let audioCtx = null;
 
@@ -577,7 +577,7 @@ export async function onRequestGet(context) {
             }
           }
 
-          // 模拟一堆金币倾泻洒落（连击撞击+金属摩擦噪音+混响余音）
+          // 播放 2.5秒经典金钱进账音效（收银机抽屉弹出 + 纸币点钞摩擦 + 落地金币鸣响）
           function playCoinSound() {
             if (!soundEnabled) return;
             try {
@@ -586,63 +586,81 @@ export async function onRequestGet(context) {
               
               const now = audioCtx.currentTime;
 
-              // 1. 生成轻微的高频粉色/白色金属摩擦背景音，模拟几十枚金币一起滑落的“哗啦啦”声
-              const bufferSize = audioCtx.sampleRate * 0.8; 
+              // 阶段 1：收银机按键/抽屉弹出重音 (0.0s - 0.15s)
+              const oscCha = audioCtx.createOscillator();
+              const gainCha = audioCtx.createGain();
+              oscCha.type = 'triangle';
+              oscCha.frequency.setValueAtTime(150, now);
+              oscCha.frequency.exponentialRampToValueAtTime(40, now + 0.12);
+              gainCha.gain.setValueAtTime(0.6, now);
+              gainCha.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+              oscCha.connect(gainCha);
+              gainCha.connect(audioCtx.destination);
+              oscCha.start(now);
+              oscCha.stop(now + 0.12);
+
+              // 阶段 2：经典收银机"叮—!"（Ka-Ching 高音铃声，0.08s 开始）
+              const oscChing1 = audioCtx.createOscillator();
+              const gainChing1 = audioCtx.createGain();
+              oscChing1.type = 'sine';
+              oscChing1.frequency.setValueAtTime(2640, now + 0.08); // high E
+              gainChing1.gain.setValueAtTime(0.5, now + 0.08);
+              gainChing1.gain.exponentialRampToValueAtTime(0.0001, now + 2.2); // 长达 2.1 秒的悠长余音
+              oscChing1.connect(gainChing1);
+              gainChing1.connect(audioCtx.destination);
+              oscChing1.start(now + 0.08);
+              oscChing1.stop(now + 2.2);
+
+              const oscChing2 = audioCtx.createOscillator();
+              const gainChing2 = audioCtx.createGain();
+              oscChing2.type = 'sine';
+              oscChing2.frequency.setValueAtTime(3300, now + 0.12); // 更高谐音
+              gainChing2.gain.setValueAtTime(0.35, now + 0.12);
+              gainChing2.gain.exponentialRampToValueAtTime(0.0001, now + 2.5); // 持续至 2.5秒
+              oscChing2.connect(gainChing2);
+              gainChing2.connect(audioCtx.destination);
+              oscChing2.start(now + 0.12);
+              oscChing2.stop(now + 2.5);
+
+              // 阶段 3：纸币飞速点钞/抽屉滑轨摩擦噪声音效 (0.15s - 0.4s)
+              const bufferSize = audioCtx.sampleRate * 0.25;
               const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
               const data = buffer.getChannelData(0);
               for (let i = 0; i < bufferSize; i++) {
                 data[i] = Math.random() * 2 - 1;
               }
-
-              const noise = audioCtx.createBufferSource();
-              noise.buffer = buffer;
-
+              const noiseSource = audioCtx.createBufferSource();
+              noiseSource.buffer = buffer;
               const noiseFilter = audioCtx.createBiquadFilter();
               noiseFilter.type = 'bandpass';
-              noiseFilter.frequency.setValueAtTime(3500, now);
-              noiseFilter.Q.setValueAtTime(3.0, now);
+              noiseFilter.frequency.setValueAtTime(4500, now + 0.15);
+              noiseFilter.Q.setValueAtTime(2.0, now + 0.15);
 
               const noiseGain = audioCtx.createGain();
-              noiseGain.gain.setValueAtTime(0.08, now);
-              noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
+              noiseGain.gain.setValueAtTime(0.12, now + 0.15);
+              noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
 
-              noise.connect(noiseFilter);
+              noiseSource.connect(noiseFilter);
               noiseFilter.connect(noiseGain);
               noiseGain.connect(audioCtx.destination);
+              noiseSource.start(now + 0.15);
+              noiseSource.stop(now + 0.4);
 
-              noise.start(now);
-              noise.stop(now + 0.7);
-
-              // 2. 密集随机触发 15 次金属叮当撞击声（模拟多枚硬币掉落叠加）
-              const coinCount = 15;
-              const baseFreqs = [1800, 2200, 2600, 3100, 3600];
-
-              for (let i = 0; i < coinCount; i++) {
-                // 在 0 ~ 0.5 秒内随机分布降落时间，形成倾泻感
-                const delay = Math.random() * 0.45;
-                const hitTime = now + delay;
-                
-                const osc = audioCtx.createOscillator();
-                const gain = audioCtx.createGain();
-
-                // 随机选择高频音调，模拟不同大小金币碰撞
-                const freq = baseFreqs[Math.floor(Math.random() * baseFreqs.length)] + (Math.random() * 400 - 200);
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(freq, hitTime);
-                // 碰撞瞬间快速向下滑音，体现硬币转动/反弹的效果
-                osc.frequency.exponentialRampToValueAtTime(freq * 0.85, hitTime + 0.12);
-
-                // 撞击音量随机
-                const volume = 0.15 + Math.random() * 0.2;
-                gain.gain.setValueAtTime(volume, hitTime);
-                gain.gain.exponentialRampToValueAtTime(0.0001, hitTime + 0.25);
-
-                osc.connect(gain);
-                gain.connect(audioCtx.destination);
-
-                osc.start(hitTime);
-                osc.stop(hitTime + 0.25);
-              }
+              // 阶段 4：大面额金币落入抽屉的连续清脆撞击声 (0.2s - 0.6s)
+              const coinTimes = [0.22, 0.28, 0.35, 0.43, 0.52];
+              const coinFreqs = [1980, 2350, 1750, 2100, 2500];
+              coinTimes.forEach((t, index) => {
+                const oscCoin = audioCtx.createOscillator();
+                const gainCoin = audioCtx.createGain();
+                oscCoin.type = 'sine';
+                oscCoin.frequency.setValueAtTime(coinFreqs[index], now + t);
+                gainCoin.gain.setValueAtTime(0.2, now + t);
+                gainCoin.gain.exponentialRampToValueAtTime(0.0001, now + t + 0.6);
+                oscCoin.connect(gainCoin);
+                gainCoin.connect(audioCtx.destination);
+                oscCoin.start(now + t);
+                oscCoin.stop(now + t + 0.6);
+              });
 
             } catch(e) {
               console.error("Audio error:", e);
@@ -804,7 +822,7 @@ export async function onRequestGet(context) {
                   showToast(newest);
                   triggerCashEffect(); // 飘字
                   spawnCoinRain();     // 撒金币雨
-                  playCoinSound();     // 播放一堆金币洒落音效
+                  playCoinSound();     // 播放2.5秒经典收银进账音效
 
                   const stream = document.getElementById('feedStream');
                   if (stream) {
@@ -916,7 +934,7 @@ function translateCity(city) {
     'zhoushan': '舟山', 'taizhou': '台州', 'lishui': '丽水',
     'nanjing': '南京', 'wuxi': '无锡', 'xuzhou': '徐州', 'changzhou': '常州',
     'suzhou': '苏州', 'nantong': '南通', 'lianyungang': '连云港', 'huaian': '淮安',
-    'yancheng': '盐城', 'yangzhou': '扬州', 'zhenjiang': '镇江', 'taizhou2': '泰州', 'suqian': '宿迁',
+    'yancheng': '盐城', 'yangzhou': '扬州', 'zhenjiang': '镇江', 'taizhou2': '泰州', 'suqian': '宿qian',
     'jinan': '济南', 'qingdao': '青岛', 'zibo': '淄博', 'zaozhuang': '枣庄',
     'dongying': '东营', 'yantai': '烟台', 'weifang': '潍坊', 'jining': '济宁',
     'taian': '泰安', 'weihai': '威海', 'rizhao': '日照', 'linyi': '临沂',
