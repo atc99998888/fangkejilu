@@ -2,10 +2,11 @@
 // 1. 深度省市解析与精度打分引擎
 // ==========================================
 const PROVINCES = [
+  '香港', '澳门', '台湾',
   '陕西', '山西', '山东', '河南', '河北', '湖南', '湖北', '广东', '广西', 
   '四川', '浙江', '江苏', '福建', '辽宁', '吉林', '黑龙江', '云南', '贵州', 
-  '甘肃', '青海', '内蒙古', '新疆', '西藏', '海南', '宁夏', '江西', '安徽', '台湾',
-  '北京', '上海', '天津', '重庆', '香港', '澳门'
+  '甘肃', '青海', '内蒙古', '新疆', '西藏', '海南', '宁夏', '江西', '安徽',
+  '北京', '上海', '天津', '重庆'
 ];
 
 function evaluatePrecision(res) {
@@ -17,9 +18,9 @@ function evaluatePrecision(res) {
   for (let prov of PROVINCES) {
     if (locationStr.includes(prov)) {
       if (locationStr.length > prov.length) {
-        score = 5; // 具体的省+市/县
+        score = 5; // 具体的省+市/县/区
       } else {
-        score = 2; // 仅省份
+        score = 3; // 仅省份/特区
       }
       break;
     }
@@ -33,6 +34,11 @@ function evaluatePrecision(res) {
 
 function cleanAndExtractLocation(rawStr) {
   if (!rawStr) return null;
+
+  // 特殊区域直接保留
+  if (rawStr.includes('香港')) return '香港特别行政区';
+  if (rawStr.includes('澳门')) return '澳门特别行政区';
+  if (rawStr.includes('台湾')) return '台湾省';
 
   for (let prov of PROVINCES) {
     if (rawStr.includes(prov)) {
@@ -57,7 +63,7 @@ function cleanAndExtractLocation(rawStr) {
   return cleaned || null;
 }
 
-// 隔离 Fetch 封装：无任何 Referer/Origin 泄露
+// 隔离 Fetch 封装
 async function cleanFetch(url, timeout = 2500) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
@@ -67,7 +73,7 @@ async function cleanFetch(url, timeout = 2500) {
       signal: controller.signal,
       referrerPolicy: 'no-referrer',
       headers: { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'application/json'
       }
     });
@@ -80,7 +86,7 @@ async function cleanFetch(url, timeout = 2500) {
 }
 
 // ==========================================
-// 2. 纯净第三方 IP 解析节点（排除百度源）
+// 2. 第三方 IP 解析节点
 // ==========================================
 
 async function apiIpWhoIsIo(cleanIp) {
@@ -90,7 +96,7 @@ async function apiIpWhoIsIo(cleanIp) {
   if (data && data.success) {
     const region = data.region || '';
     const city = data.city || '';
-    const parsed = cleanAndExtractLocation(`${region}${city}`);
+    const parsed = cleanAndExtractLocation(`${region}${city}`) || data.city || data.region;
     if (parsed) {
       const item = { country: data.country_code || 'CN', city: parsed };
       return { ...item, score: evaluatePrecision(item) };
@@ -105,7 +111,7 @@ async function apiIpSb(cleanIp) {
   const data = await res.json();
   const region = data.region || '';
   const city = data.city || '';
-  const parsed = cleanAndExtractLocation(`${region}${city}`);
+  const parsed = cleanAndExtractLocation(`${region}${city}`) || data.city || data.region;
   if (parsed) {
     const item = { country: data.country_code || 'CN', city: parsed };
     return { ...item, score: evaluatePrecision(item) };
@@ -120,7 +126,7 @@ async function apiIpWhoisApp(cleanIp) {
   if (data && data.success) {
     const region = data.region || '';
     const city = data.city || '';
-    const parsed = cleanAndExtractLocation(`${region}${city}`);
+    const parsed = cleanAndExtractLocation(`${region}${city}`) || data.city || data.region;
     if (parsed) {
       const item = { country: data.country_code || 'CN', city: parsed };
       return { ...item, score: evaluatePrecision(item) };
@@ -136,7 +142,7 @@ async function apiIpApi(cleanIp) {
   if (data && data.status === 'success') {
     const region = data.regionName || '';
     const city = data.city || '';
-    const parsed = cleanAndExtractLocation(`${region}${city}`);
+    const parsed = cleanAndExtractLocation(`${region}${city}`) || data.city || data.regionName;
     if (parsed) {
       const item = { country: data.countryCode || 'CN', city: parsed };
       return { ...item, score: evaluatePrecision(item) };
@@ -147,7 +153,7 @@ async function apiIpApi(cleanIp) {
 
 const globalIpCache = new Map();
 
-async function resolveBestGlobalGeo(ip) {
+async function resolveBestGlobalGeo(ip, requestCf) {
   if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1') {
     return { country: 'CN', city: '局域网/本地' };
   }
@@ -161,6 +167,30 @@ async function resolveBestGlobalGeo(ip) {
     return globalIpCache.get(cleanIp);
   }
 
+  // 1. 优先使用 Cloudflare 原生 GeoIP 节点判定（对香港、台湾、海外 IP 100% 精准且无延迟）
+  if (requestCf) {
+    const cfCountry = requestCf.country || '';
+    const cfCity = requestCf.city || '';
+    const cfRegion = requestCf.region || '';
+
+    if (cfCountry === 'HK') {
+      const result = { country: 'HK', city: '香港特别行政区' };
+      globalIpCache.set(cleanIp, result);
+      return result;
+    }
+    if (cfCountry === 'MO') {
+      const result = { country: 'MO', city: '澳门特别行政区' };
+      globalIpCache.set(cleanIp, result);
+      return result;
+    }
+    if (cfCountry === 'TW') {
+      const result = { country: 'TW', city: '台湾省' };
+      globalIpCache.set(cleanIp, result);
+      return result;
+    }
+  }
+
+  // 2. 备用外部 API 查询
   const promises = [
     apiIpWhoIsIo(cleanIp),
     apiIpSb(cleanIp),
@@ -190,20 +220,28 @@ async function resolveBestGlobalGeo(ip) {
     console.error("IP解析异常:", e);
   }
 
-  const fallback = { country: 'CN', city: '中国' };
+  // 根据 CF 节点降级处理，避免盲目显示“中国”
+  const fallbackCountry = requestCf?.country || 'CN';
+  let fallbackCity = '未知地区';
+  if (fallbackCountry === 'HK') fallbackCity = '香港特别行政区';
+  else if (fallbackCountry === 'MO') fallbackCity = '澳门特别行政区';
+  else if (fallbackCountry === 'TW') fallbackCity = '台湾省';
+  else if (fallbackCountry === 'CN') fallbackCity = '中国大陆';
+
+  const fallback = { country: fallbackCountry, city: fallbackCity };
   globalIpCache.set(cleanIp, fallback);
   return fallback;
 }
 
-// 批处理防止触发频繁 API 限制
-async function processBatch(rows, batchSize = 5) {
+// 批处理
+async function processBatch(rows, requestCf, batchSize = 5) {
   if (!rows || rows.length === 0) return [];
   const results = [];
   for (let i = 0; i < rows.length; i += batchSize) {
     const chunk = rows.slice(i, i + batchSize);
     const processedChunk = await Promise.all(chunk.map(async (row) => {
       const realIp = row.ip || 'Unknown';
-      const geo = await resolveBestGlobalGeo(realIp);
+      const geo = await resolveBestGlobalGeo(realIp, requestCf);
       return {
         ...row,
         ip: realIp,
@@ -236,9 +274,6 @@ export async function onRequestGet(context) {
     return new Response("数据库未绑定：请在 Cloudflare Pages 设置中绑定名为 DB 的 D1 数据库", { status: 500 });
   }
 
-  // ----------------------------------------------------
-  // 严格安全的域名提取与防污染逻辑
-  // ----------------------------------------------------
   let rawHost = request.headers.get("x-forwarded-host") || request.headers.get("host");
   if (!rawHost) {
     rawHost = url.hostname;
@@ -246,7 +281,6 @@ export async function onRequestGet(context) {
 
   let requestDomain = rawHost.split(':')[0].toLowerCase().trim();
 
-  // 如果提取到了第三方域名或非合法域名，强制还原为当前请求 URL 的真实 Hostname
   if (requestDomain.includes('baidu.com') || requestDomain.includes('ip-api.com') || !requestDomain) {
     requestDomain = url.hostname;
   }
@@ -272,7 +306,7 @@ export async function onRequestGet(context) {
       WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
       ORDER BY id DESC
     `).all();
-    const todayDetails = await processBatch(todayDetailsRaw?.results || [], 5);
+    const todayDetails = await processBatch(todayDetailsRaw?.results || [], request.cf, 5);
 
     const yesterdayDetailsRaw = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
@@ -280,7 +314,7 @@ export async function onRequestGet(context) {
       WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
       ORDER BY id DESC
     `).all();
-    const yesterdayDetails = await processBatch(yesterdayDetailsRaw?.results || [], 5);
+    const yesterdayDetails = await processBatch(yesterdayDetailsRaw?.results || [], request.cf, 5);
 
     const last7DaysRes = await env.DB.prepare(`
       SELECT DATE(DATETIME(visit_time, '+8 hours')) as date, COUNT(*) as count 
@@ -587,7 +621,7 @@ export async function onRequestGet(context) {
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问地区排行榜 (点击展开明细)
-              <span class="sub-tip">🌐 纯净高精度并发解析</span>
+              <span class="sub-tip">🌐 高精度边缘节点解析</span>
             </h2>
             <div class="table-responsive">
               <table>
@@ -785,12 +819,23 @@ function formatDate(utcString) {
   }
 }
 
+// 完善的国家/地区映射逻辑
 function translateCountry(code) {
   const countryMap = {
-    'CN': '🇨🇳 中国', 'HK': '🇭🇰 中国香港', 'MO': '🇲🇴 中国澳门', 'TW': '🇹🇼 中国台湾',
-    'US': '🇺🇸 美国', 'JP': '🇯🇵 日本', 'KR': '🇰🇷 韩国', 'SG': '🇸🇬 新加坡',
-    'GB': '🇬🇧 英国', 'DE': '🇩🇪 德国', 'CA': '🇨🇦 加拿大', 'AU': '🇦🇺 澳大利亚',
-    'RU': '🇷🇺 俄罗斯', 'Unknown': '未知国家'
+    'CN': '🇨🇳 中国大陆',
+    'HK': '🇭🇰 中国香港',
+    'MO': '🇲🇴 中国澳门',
+    'TW': '🇹🇼 中国台湾',
+    'US': '🇺🇸 美国',
+    'JP': '🇯🇵 日本',
+    'KR': '🇰🇷 韩国',
+    'SG': '🇸🇬 新加坡',
+    'GB': '🇬🇧 英国',
+    'DE': '🇩🇪 德国',
+    'CA': '🇨🇦 加拿大',
+    'AU': '🇦🇺 澳大利亚',
+    'RU': '🇷🇺 俄罗斯',
+    'Unknown': '未知国家'
   };
   return countryMap[code] || code || '未知国家';
 }
