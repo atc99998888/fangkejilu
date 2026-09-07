@@ -1,301 +1,7 @@
-// ==========================================
-// 1. 拼音/英文转中文映射字典与解析引擎
-// ==========================================
-const PINYIN_MAP = {
-  // 特别行政区与台湾
-  'hong kong': '香港', 'hongkong': '香港', 'hk': '香港',
-  'macau': '澳门', 'macao': '澳门',
-  'taiwan': '台湾', 'taipei': '台北',
-
-  // 直辖市
-  'beijing': '北京', 'shanghai': '上海', 'tianjin': '天津', 'chongqing': '重庆',
-
-  // 省份/自治区
-  'guangdong': '广东', 'zhejiang': '浙江', 'jiangsu': '江苏', 'sichuan': '四川',
-  'shandong': '山东', 'henan': '河南', 'hubei': '湖北', 'hunan': '湖南',
-  'fujian': '福建', 'hebei': '河北', 'shaanxi': '陕西', 'shanxi': '山西',
-  'anhui': '安徽', 'jiangxi': '江西', 'liaoning': '辽宁', 'heilongjiang': '黑龙江',
-  'jilin': '吉林', 'yunnan': '云南', 'guizhou': '贵州', 'guangxi': '广西',
-  'hainan': '海南', 'gansu': '甘肃', 'qinghai': '青海', 'inner mongolia': '内蒙古',
-  'neimenggu': '内蒙古', 'xinjiang': '新疆', 'xizang': '西藏', 'tibet': '西藏',
-  'ningxia': '宁夏',
-
-  // 常见城市拼音
-  'guangzhou': '广州', 'shenzhen': '深圳', 'dongguan': '东莞', 'foshan': '佛山',
-  'zhuhai': '珠海', 'huizhou': '惠州', 'zhongshan': '中山', 'hangzhou': '杭州',
-  'ningbo': '宁波', 'wenzhou': '温州', 'nanjing': '南京', 'suzhou': '苏州',
-  'wuxi': '无锡', 'changzhou': '常州', 'chengdu': '成都', 'wuhan': '武汉',
-  'changsha': '长沙', 'zhengzhou': '郑州', 'xian': '西安', 'jinan': '济南',
-  'qingdao': '青岛', 'fuzhou': '福州', 'xiamen': '厦门', 'hefei': '合肥',
-  'nanchang': '南昌', 'shenyang': '沈阳', 'dalian': '大连', 'harbin': '哈尔滨',
-  'changchun': '长春', 'kunming': '昆明', 'guiyang': '贵阳', 'nanning': '南宁',
-  'haikou': '海口', 'sanya': '三亚', 'lanzhou': '兰州', 'taiyuan': '太原',
-  'shijiazhuang': '石家庄', 'urrumqi': '乌鲁木齐', 'hohhot': '呼和浩特',
-  'yinchuan': '银川', 'xining': '西宁', 'lhasa': '拉萨'
-};
-
-const PROVINCES = [
-  '香港', '澳门', '台湾',
-  '陕西', '山西', '山东', '河南', '河北', '湖南', '湖北', '广东', '广西', 
-  '四川', '浙江', '江苏', '福建', '辽宁', '吉林', '黑龙江', '云南', '贵州', 
-  '甘肃', '青海', '内蒙古', '新疆', '西藏', '海南', '宁夏', '江西', '安徽',
-  '北京', '上海', '天津', '重庆'
-];
-
-function convertPinyinToZh(str) {
-  if (!str) return '';
-  let lowerStr = str.toLowerCase().trim();
-  
-  // 匹配拼音字典
-  if (PINYIN_MAP[lowerStr]) {
-    return PINYIN_MAP[lowerStr];
-  }
-
-  // 尝试替换字符串中的英文单词
-  for (let [py, zh] of Object.entries(PINYIN_MAP)) {
-    if (lowerStr.includes(py)) {
-      lowerStr = lowerStr.replace(new RegExp(py, 'g'), zh);
-    }
-  }
-
-  // 将首字母大写的拼音剔除纯英文非匹配项
-  return lowerStr.replace(/[a-zA-Z]/g, '').trim() || str;
-}
-
-function evaluatePrecision(res) {
-  if (!res || !res.city || res.city === '中国' || res.city === '未知地区' || res.city === '未知') return 0;
-  
-  let score = 1;
-  const locationStr = res.city;
-
-  for (let prov of PROVINCES) {
-    if (locationStr.includes(prov)) {
-      if (locationStr.length > prov.length) {
-        score = 5; // 具体的省+市/县/区
-      } else {
-        score = 3; // 仅省份/特区
-      }
-      break;
-    }
-  }
-
-  if (score === 1 && locationStr.length >= 2) score = 4;
-  if (res.country && res.country !== 'CN' && res.country !== 'Unknown') score += 1;
-
-  return score;
-}
-
-function cleanAndExtractLocation(rawStr) {
-  if (!rawStr) return null;
-
-  // 优先把英文/拼音转换为中文
-  let zhStr = convertPinyinToZh(rawStr);
-
-  // 特殊区域直接保留
-  if (zhStr.includes('香港')) return '香港特别行政区';
-  if (zhStr.includes('澳门')) return '澳门特别行政区';
-  if (zhStr.includes('台湾')) return '台湾省';
-
-  for (let prov of PROVINCES) {
-    if (zhStr.includes(prov)) {
-      let match = zhStr.match(new RegExp(`${prov}(?:省|市)?([\\u4e00-\\u9fa5]+)`));
-      if (match && match[1]) {
-        let cityName = match[1]
-          .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房|市|区|县)/g, '')
-          .trim();
-        if (cityName) {
-          return `${prov}${cityName}`;
-        }
-      }
-      return prov;
-    }
-  }
-
-  let cleaned = zhStr
-    .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房)/g, '')
-    .replace(/^中国\s*/, '')
-    .trim();
-
-  return cleaned || null;
-}
-
-// 隔离 Fetch 封装
-async function cleanFetch(url, timeout = 2500) {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeout);
-  try {
-    const response = await fetch(url, { 
-      method: 'GET',
-      signal: controller.signal,
-      referrerPolicy: 'no-referrer',
-      headers: { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json'
-      }
-    });
-    clearTimeout(id);
-    return response;
-  } catch (e) {
-    clearTimeout(id);
-    throw e;
-  }
-}
-
-// ==========================================
-// 2. 第三方 IP 解析节点
-// ==========================================
-
-async function apiIpWhoIsIo(cleanIp) {
-  const res = await cleanFetch(`https://ipwho.is/${cleanIp}?lang=zh-CN`);
-  if (!res.ok) throw new Error('IpWhoIsIo error');
-  const data = await res.json();
-  if (data && data.success) {
-    const region = data.region || '';
-    const city = data.city || '';
-    const parsed = cleanAndExtractLocation(`${region}${city}`) || cleanAndExtractLocation(data.city) || cleanAndExtractLocation(data.region);
-    if (parsed) {
-      const item = { country: data.country_code || 'CN', city: parsed };
-      return { ...item, score: evaluatePrecision(item) };
-    }
-  }
-  throw new Error('IpWhoIsIo failed');
-}
-
-async function apiIpWhoisApp(cleanIp) {
-  const res = await cleanFetch(`https://ipwhois.app/json/${cleanIp}?lang=zh-CN`);
-  if (!res.ok) throw new Error('IpWhoisApp error');
-  const data = await res.json();
-  if (data && data.success) {
-    const region = data.region || '';
-    const city = data.city || '';
-    const parsed = cleanAndExtractLocation(`${region}${city}`) || cleanAndExtractLocation(data.city) || cleanAndExtractLocation(data.region);
-    if (parsed) {
-      const item = { country: data.country_code || 'CN', city: parsed };
-      return { ...item, score: evaluatePrecision(item) };
-    }
-  }
-  throw new Error('IpWhoisApp failed');
-}
-
-async function apiIpApi(cleanIp) {
-  const res = await cleanFetch(`http://ip-api.com/json/${cleanIp}?fields=status,countryCode,regionName,city&lang=zh-CN`);
-  if (!res.ok) throw new Error('IpApi error');
-  const data = await res.json();
-  if (data && data.status === 'success') {
-    const region = data.regionName || '';
-    const city = data.city || '';
-    const parsed = cleanAndExtractLocation(`${region}${city}`) || cleanAndExtractLocation(data.city) || cleanAndExtractLocation(data.regionName);
-    if (parsed) {
-      const item = { country: data.countryCode || 'CN', city: parsed };
-      return { ...item, score: evaluatePrecision(item) };
-    }
-  }
-  throw new Error('IpApi failed');
-}
-
-async function apiIpSb(cleanIp) {
-  const res = await cleanFetch(`https://api.ip.sb/geoip/${cleanIp}`);
-  if (!res.ok) throw new Error('IP.SB error');
-  const data = await res.json();
-  const region = data.region || '';
-  const city = data.city || '';
-  const parsed = cleanAndExtractLocation(`${region}${city}`) || cleanAndExtractLocation(data.city) || cleanAndExtractLocation(data.region);
-  if (parsed) {
-    const item = { country: data.country_code || 'CN', city: parsed };
-    return { ...item, score: evaluatePrecision(item) };
-  }
-  throw new Error('IP.SB failed');
-}
-
-const globalIpCache = new Map();
-
-async function resolveBestGlobalGeo(ip, requestCf) {
-  if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1') {
-    return { country: 'CN', city: '局域网/本地' };
-  }
-
-  let cleanIp = ip.split(',')[0].split('/')[0].trim();
-  if (cleanIp.startsWith('192.168.') || cleanIp.startsWith('10.') || cleanIp.startsWith('172.16.') || cleanIp.startsWith('127.')) {
-    return { country: 'CN', city: '局域网/本地' };
-  }
-
-  if (globalIpCache.has(cleanIp)) {
-    return globalIpCache.get(cleanIp);
-  }
-
-  // 优先通过第三方接口查询 IP 对应的具体中文地区
-  const promises = [
-    apiIpWhoIsIo(cleanIp),
-    apiIpWhoisApp(cleanIp),
-    apiIpApi(cleanIp),
-    apiIpSb(cleanIp)
-  ];
-
-  try {
-    const results = await Promise.allSettled(promises);
-    let bestResult = null;
-
-    for (const res of results) {
-      if (res.status === 'fulfilled' && res.value) {
-        if (!bestResult || res.value.score > bestResult.score) {
-          bestResult = res.value;
-        }
-        if (bestResult.score >= 4) break;
-      }
-    }
-
-    if (bestResult && bestResult.city) {
-      const finalData = { country: bestResult.country, city: bestResult.city };
-      globalIpCache.set(cleanIp, finalData);
-      return finalData;
-    }
-  } catch (e) {
-    console.error("IP解析异常:", e);
-  }
-
-  // 保底兜底逻辑
-  const fallbackCountry = requestCf?.country || 'CN';
-  let fallbackCity = '未知地区';
-  if (fallbackCountry === 'HK') fallbackCity = '香港特别行政区';
-  else if (fallbackCountry === 'MO') fallbackCity = '澳门特别行政区';
-  else if (fallbackCountry === 'TW') fallbackCity = '台湾省';
-  else if (fallbackCountry === 'CN') fallbackCity = '中国大陆';
-
-  const fallback = { country: fallbackCountry, city: fallbackCity };
-  globalIpCache.set(cleanIp, fallback);
-  return fallback;
-}
-
-// 批处理
-async function processBatch(rows, requestCf, batchSize = 5) {
-  if (!rows || rows.length === 0) return [];
-  const results = [];
-  for (let i = 0; i < rows.length; i += batchSize) {
-    const chunk = rows.slice(i, i + batchSize);
-    const processedChunk = await Promise.all(chunk.map(async (row) => {
-      const realIp = row.ip || 'Unknown';
-      const geo = await resolveBestGlobalGeo(realIp, requestCf);
-      return {
-        ...row,
-        ip: realIp,
-        country: geo.country,
-        city: geo.city,
-        displayIp: escapeHtml(realIp),
-        displayCountry: translateCountry(geo.country),
-        displayCity: geo.city
-      };
-    }));
-    results.push(...processedChunk);
-  }
-  return results;
-}
-
-// ==========================================
-// 3. Cloudflare Pages 主入口
-// ==========================================
 export async function onRequestGet(context) {
   const { request, env } = context;
 
+  // 后台访问密码
   const SECRET_KEY = "123456"; 
   const url = new URL(request.url);
 
@@ -303,57 +9,51 @@ export async function onRequestGet(context) {
     return new Response("未授权访问：请在 URL 末尾加上 ?key=你的密码", { status: 403 });
   }
 
+  // 检查 D1 绑定是否存在
   if (!env || !env.DB) {
     return new Response("数据库未绑定：请在 Cloudflare Pages 设置中绑定名为 DB 的 D1 数据库", { status: 500 });
   }
 
-  let rawHost = request.headers.get("x-forwarded-host") || request.headers.get("host");
-  if (!rawHost) {
-    rawHost = url.hostname;
-  }
-
-  let requestDomain = rawHost.split(':')[0].toLowerCase().trim();
-
-  if (requestDomain.includes('baidu.com') || requestDomain.includes('ip-api.com') || !requestDomain) {
-    requestDomain = url.hostname;
-  }
-
   try {
+    // 自动初始化数据表
     await env.DB.exec("CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL, ip TEXT DEFAULT 'Unknown', city TEXT DEFAULT 'Unknown', country TEXT DEFAULT 'Unknown', visit_time DATETIME DEFAULT CURRENT_TIMESTAMP);");
 
+    // 1. 获取【今日访问量】与【昨日访问量】
     const todayRes = await env.DB.prepare(`
       SELECT COUNT(*) as count FROM visits 
-      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
     `).first();
     const todayVisits = todayRes?.count || 0;
 
     const yesterdayRes = await env.DB.prepare(`
       SELECT COUNT(*) as count FROM visits 
-      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
-    const todayDetailsRaw = await env.DB.prepare(`
+    // 2. 查询【今日】与【昨日】的全量明细记录
+    const todayDetailsRes = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
       FROM visits 
-      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
       ORDER BY id DESC
     `).all();
-    const todayDetails = await processBatch(todayDetailsRaw?.results || [], request.cf, 5);
+    const todayDetails = todayDetailsRes?.results || [];
 
-    const yesterdayDetailsRaw = await env.DB.prepare(`
+    const yesterdayDetailsRes = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
       FROM visits 
-      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
       ORDER BY id DESC
     `).all();
-    const yesterdayDetails = await processBatch(yesterdayDetailsRaw?.results || [], request.cf, 5);
+    const yesterdayDetails = yesterdayDetailsRes?.results || [];
 
+    // 3. 获取最近 7 天每日访问量
     const last7DaysRes = await env.DB.prepare(`
-      SELECT DATE(DATETIME(visit_time, '+8 hours')) as date, COUNT(*) as count 
+      SELECT DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) as date, COUNT(*) as count 
       FROM visits 
-      WHERE DATE(DATETIME(visit_time, '+8 hours')) >= DATE(DATETIME('now', '+8 hours', '-6 days'))
-      GROUP BY DATE(DATETIME(visit_time, '+8 hours'))
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) >= DATE(DATETIME('now', '+8 hours', '-6 days'))
+      GROUP BY DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours'))
       ORDER BY date ASC
     `).all();
 
@@ -371,10 +71,11 @@ export async function onRequestGet(context) {
       });
     }
 
+    // 4. 查询【今日】与【昨日】域名数据（用于对比）
     const domainRankRes = await env.DB.prepare(`
       SELECT domain, COUNT(*) as domain_total 
       FROM visits 
-      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
       GROUP BY domain 
       ORDER BY domain_total DESC
     `).all();
@@ -383,7 +84,7 @@ export async function onRequestGet(context) {
     const yesterdayDomainRes = await env.DB.prepare(`
       SELECT domain, COUNT(*) as domain_total 
       FROM visits 
-      WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
       GROUP BY domain
     `).all();
     const yesterdayDomainMap = {};
@@ -391,23 +92,28 @@ export async function onRequestGet(context) {
       yesterdayDomainMap[item.domain] = item.domain_total;
     });
 
-    const cityRankMap = {};
-    todayDetails.forEach(item => {
-      const key = `${item.country}_${item.displayCity}`;
-      if (!cityRankMap[key]) {
-        cityRankMap[key] = { country: item.country, city: item.displayCity, city_total: 0 };
-      }
-      cityRankMap[key].city_total += 1;
-    });
+    // 5. 查询【今日】与【昨日】城市数据（移除 LIMIT 限制，排列所有城市）
+    const cityRankRes = await env.DB.prepare(`
+      SELECT country, city, COUNT(*) as city_total 
+      FROM visits 
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
+      GROUP BY country, city 
+      ORDER BY city_total DESC
+    `).all();
+    const cityRank = cityRankRes?.results || [];
 
-    const cityRank = Object.values(cityRankMap).sort((a, b) => b.city_total - a.city_total);
-
+    const yesterdayCityRes = await env.DB.prepare(`
+      SELECT country, city, COUNT(*) as city_total 
+      FROM visits 
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
+      GROUP BY country, city
+    `).all();
     const yesterdayCityMap = {};
-    yesterdayDetails.forEach(item => {
-      const key = `${item.country}_${item.displayCity}`;
-      yesterdayCityMap[key] = (yesterdayCityMap[key] || 0) + 1;
+    (yesterdayCityRes?.results || []).forEach(item => {
+      yesterdayCityMap[`${item.country}_${item.city}`] = item.city_total;
     });
 
+    // 渲染通用顶部卡片明细表格
     const renderTableRows = (list) => {
       if (!list || list.length === 0) {
         return '<tr><td colspan="5" style="text-align:center; color:#999;">暂无访问记录</td></tr>';
@@ -416,9 +122,9 @@ export async function onRequestGet(context) {
         <tr>
           <td><strong>${escapeHtml(punycodeToUnicode(row.domain))}</strong></td>
           <td><code>${formatDate(row.visit_time)}</code></td>
-          <td><code>${row.displayIp}</code></td>
-          <td>${row.displayCountry}</td>
-          <td>${row.displayCity}</td>
+          <td><code>${escapeHtml(row.ip || 'Unknown')}</code></td>
+          <td>${translateCountry(row.country)}</td>
+          <td>${translateCity(row.city)}</td>
         </tr>
       `).join('');
     };
@@ -426,18 +132,22 @@ export async function onRequestGet(context) {
     const todayTableRowsHtml = renderTableRows(todayDetails);
     const yesterdayTableRowsHtml = renderTableRows(yesterdayDetails);
 
+    // 构建【按域名归类】和【按城市归类】的数据映射
     const domainDetailsMap = {};
     const cityDetailsMap = {};
 
     todayDetails.forEach(item => {
+      // 域名归类
       if (!domainDetailsMap[item.domain]) domainDetailsMap[item.domain] = [];
       domainDetailsMap[item.domain].push(item);
 
-      const cityKey = `${item.country}_${item.displayCity}`;
+      // 城市归类 (唯一 Key: 国家_城市)
+      const cityKey = `${item.country}_${item.city}`;
       if (!cityDetailsMap[cityKey]) cityDetailsMap[cityKey] = [];
       cityDetailsMap[cityKey].push(item);
     });
 
+    // 1. 生成可展开的域名排行榜 HTML
     let domainRankHtml = domainRank.map((item, index) => {
       const domain = item.domain;
       const list = domainDetailsMap[domain] || [];
@@ -446,9 +156,9 @@ export async function onRequestGet(context) {
       const innerRows = list.map(row => `
         <tr>
           <td><code>${formatDate(row.visit_time)}</code></td>
-          <td><code>${row.displayIp}</code></td>
-          <td>${row.displayCountry}</td>
-          <td>${row.displayCity}</td>
+          <td><code>${escapeHtml(row.ip || 'Unknown')}</code></td>
+          <td>${translateCountry(row.country)}</td>
+          <td>${translateCity(row.city)}</td>
         </tr>
       `).join('');
 
@@ -465,7 +175,7 @@ export async function onRequestGet(context) {
               <div class="inner-title">🌐 域名 <strong>${escapeHtml(punycodeToUnicode(domain))}</strong> 今日访问明细：</div>
               <table>
                 <thead>
-                  <tr><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>省份 / 城市</th></tr>
+                  <tr><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
                 </thead>
                 <tbody>
                   ${innerRows || '<tr><td colspan="4" style="text-align:center;">暂无明细记录</td></tr>'}
@@ -477,6 +187,7 @@ export async function onRequestGet(context) {
       `;
     }).join('');
 
+    // 2. 生成可展开的城市排行榜 HTML
     let cityRankHtml = cityRank.map((item, index) => {
       const cityKey = `${item.country}_${item.city}`;
       const list = cityDetailsMap[cityKey] || [];
@@ -486,7 +197,7 @@ export async function onRequestGet(context) {
         <tr>
           <td><code>${formatDate(row.visit_time)}</code></td>
           <td><strong style="color:#0066ff;">${escapeHtml(punycodeToUnicode(row.domain))}</strong></td>
-          <td><code>${row.displayIp}</code></td>
+          <td><code>${escapeHtml(row.ip || 'Unknown')}</code></td>
         </tr>
       `).join('');
 
@@ -494,14 +205,14 @@ export async function onRequestGet(context) {
         <tr class="clickable-row" onclick="toggleElement('city-detail-${index}', 'city-icon-${index}')">
           <td style="text-align: center;"><span class="rank-badge rank-${index + 1}">${index + 1}</span></td>
           <td>${translateCountry(item.country)}</td>
-          <td><strong>${item.city}</strong> <span class="arrow-icon" id="city-icon-${index}">▼</span></td>
+          <td><strong>${translateCity(item.city)}</strong> <span class="arrow-icon" id="city-icon-${index}">▼</span></td>
           <td><span class="pv-count">${item.city_total} 次</span></td>
           <td><span class="pv-yesterday">${yesterdayCount} 次</span></td>
         </tr>
         <tr id="city-detail-${index}" class="detail-row" style="display: none;">
           <td colspan="5" class="detail-cell">
             <div class="inner-table-wrapper">
-              <div class="inner-title">🏙️ 地区 <strong>${item.city}</strong> 今日来源域名与时间明细：</div>
+              <div class="inner-title">🏙️ 城市 <strong>${translateCity(item.city)}</strong> 今日来源域名与时间明细：</div>
               <table>
                 <thead>
                   <tr><th>访问时间 (北京时间)</th><th>被访问域名</th><th>访客 IP</th></tr>
@@ -522,7 +233,7 @@ export async function onRequestGet(context) {
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>集群访客控制台</title>
+        <title>多域名访客数据统计控制台</title>
         <style>
           * { box-sizing: border-box; }
           body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background: #f0f2f5; color: #333; margin: 0; }
@@ -544,9 +255,8 @@ export async function onRequestGet(context) {
           .chart-container { position: relative; width: 100%; height: 220px; margin-top: 10px; }
           canvas { width: 100%!important; height: 100%!important; }
 
-          .table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-          table { width: 100%; border-collapse: collapse; margin-top: 4px; white-space: nowrap; }
-          th, td { border: 1px solid #eef0f3; padding: 10px; text-align: left; font-size: 13px; white-space: nowrap; }
+          table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+          th, td { border: 1px solid #eef0f3; padding: 10px; text-align: left; font-size: 13px; }
           th { background-color: #f8f9fa; color: #555; }
 
           tr.clickable-row { cursor: pointer; transition: background-color 0.15s ease; }
@@ -554,7 +264,7 @@ export async function onRequestGet(context) {
           .arrow-icon { font-size: 10px; color: #888; margin-left: 6px; display: inline-block; transition: transform 0.2s ease; }
 
           .detail-cell { padding: 0!important; background-color: #fcfdfe!important; }
-          .inner-table-wrapper { padding: 12px 16px; background: #f4f8fb; border-bottom: 2px solid #e1e9f0; overflow-x: auto; }
+          .inner-table-wrapper { padding: 12px 16px; background: #f4f8fb; border-bottom: 2px solid #e1e9f0; }
           .inner-title { font-size: 12px; color: #444; margin-bottom: 8px; font-weight: 500; }
           .inner-table-wrapper table { background: #fff; }
           .inner-table-wrapper th { background-color: #eaf2f9; }
@@ -572,19 +282,19 @@ export async function onRequestGet(context) {
       <body>
         <div class="container">
           <div class="header">
-            <h1>📊 网站集群高精度访客控制台</h1>
+            <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
           <div class="stats-grid">
             <div class="stat-card" onclick="toggleElement('today-detail-panel', 'today-icon')">
               <div class="label">今日访问量</div>
               <div class="num">${todayVisits}</div>
-              <div class="tip">👇 点击展开/收起今日明细 <span id="today-icon">▼</span></div>
+              <div class="tip">👇 点击展开/收起今日访问明细 <span id="today-icon">▼</span></div>
             </div>
             <div class="stat-card" onclick="toggleElement('yesterday-detail-panel', 'yesterday-icon')">
               <div class="label">昨日访问量</div>
               <div class="num">${yesterdayVisits}</div>
-              <div class="tip">👇 点击展开/收起昨日明细 <span id="yesterday-icon">▼</span></div>
+              <div class="tip">👇 点击展开/收起昨日访问明细 <span id="yesterday-icon">▼</span></div>
             </div>
           </div>
 
@@ -593,10 +303,10 @@ export async function onRequestGet(context) {
               📋 今日全量访问明细（共 ${todayVisits} 条记录）
               <span class="sub-tip">⏱️ 今日 00:00 至今</span>
             </h2>
-            <div class="table-responsive" style="max-height: 400px;">
+            <div style="overflow-x: auto; max-height: 400px;">
               <table>
                 <thead>
-                  <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>省份 / 城市</th></tr>
+                  <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
                 </thead>
                 <tbody>
                   ${todayTableRowsHtml}
@@ -610,10 +320,10 @@ export async function onRequestGet(context) {
               📜 昨日全量访问明细（共 ${yesterdayVisits} 条记录）
               <span class="sub-tip" style="color: #8e44ad;">⏱️ 昨日全天</span>
             </h2>
-            <div class="table-responsive" style="max-height: 400px;">
+            <div style="overflow-x: auto; max-height: 400px;">
               <table>
                 <thead>
-                  <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>省份 / 城市</th></tr>
+                  <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
                 </thead>
                 <tbody>
                   ${yesterdayTableRowsHtml}
@@ -634,7 +344,7 @@ export async function onRequestGet(context) {
               🏆 今日域名流量排行榜 (点击展开明细)
               <span class="sub-tip">⏱️ 包含昨日数据对比</span>
             </h2>
-            <div class="table-responsive">
+            <div style="overflow-x: auto;">
               <table>
                 <thead>
                   <tr>
@@ -653,16 +363,16 @@ export async function onRequestGet(context) {
 
           <div class="panel">
             <h2 class="panel-title">
-              🏙️ 热门访问地区排行榜 (点击展开明细)
-              <span class="sub-tip">🌐 高精度中文解析</span>
+              🏙️ 热门访问城市排行榜 (点击展开明细)
+              <span class="sub-tip">⏱️ 已列出所有城市及昨日对比</span>
             </h2>
-            <div class="table-responsive">
+            <div style="overflow-x: auto;">
               <table>
                 <thead>
                   <tr>
                     <th style="width: 70px; text-align: center;">排名</th>
                     <th>国家 / 地区</th>
-                    <th>省份 / 城市</th>
+                    <th>城市</th>
                     <th>今日访问次数</th>
                     <th>昨日访问次数</th>
                   </tr>
@@ -786,6 +496,31 @@ export async function onRequestGet(context) {
   }
 }
 
+// 收集数据（上报）时调用的 IP 及地理位置优化解析逻辑
+export async function handleVisitRecord(request, env) {
+  const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for")?.split(',')[0] || "Unknown";
+  let country = request.cf?.country || "Unknown";
+  let city = request.cf?.city || "Unknown";
+
+  // 如果 CF 判定为香港或者无法获取具体城市，使用第三方 API 兜底解析真正真实归属地
+  if (city === "Unknown" || city === "Hong Kong" || country === "HK") {
+    try {
+      const geoRes = await fetch(`http://ip-api.com/json/${ip}?lang=zh-CN`);
+      if (geoRes.ok) {
+        const geoData = await geoRes.json();
+        if (geoData.status === "success") {
+          country = geoData.countryCode || country;
+          city = geoData.city || city;
+        }
+      }
+    } catch (e) {
+      // 容错忽略
+    }
+  }
+
+  return { ip, country, city };
+}
+
 function decodePunycodePart(input) {
   const BASE = 36, TMIN = 1, TMAX = 26, SKEW = 38, DAMP = 700, INITIAL_BIAS = 72, INITIAL_N = 128;
   function adapt(delta, numPoints, firstTime) {
@@ -854,20 +589,89 @@ function formatDate(utcString) {
 
 function translateCountry(code) {
   const countryMap = {
-    'CN': '🇨🇳 中国大陆',
-    'HK': '🇭🇰 中国香港',
-    'MO': '🇲🇴 中国澳门',
-    'TW': '🇹🇼 中国台湾',
-    'US': '🇺🇸 美国',
-    'JP': '🇯🇵 日本',
-    'KR': '🇰🇷 韩国',
-    'SG': '🇸🇬 新加坡',
-    'GB': '🇬🇧 英国',
-    'DE': '🇩🇪 德国',
-    'CA': '🇨🇦 加拿大',
-    'AU': '🇦🇺 澳大利亚',
-    'RU': '🇷🇺 俄罗斯',
-    'Unknown': '未知国家'
+    'CN': '🇨🇳 中国', 'HK': '🇭🇰 中国香港', 'MO': '🇲🇴 中国澳门', 'TW': '🇹🇼 中国台湾',
+    'US': '🇺🇸 美国', 'JP': '🇯🇵 日本', 'KR': '🇰🇷 韩国', 'SG': '🇸🇬 新加坡',
+    'GB': '🇬🇧 英国', 'DE': '🇩🇪 德国', 'CA': '🇨🇦 加拿大', 'AU': '🇦🇺 澳大利亚',
+    'RU': '🇷🇺 俄罗斯', 'Unknown': '未知国家'
   };
   return countryMap[code] || code || '未知国家';
+}
+
+function translateCity(city) {
+  if (!city || city === 'Unknown') return '未知城市';
+  const cityMap = {
+    'Beijing': '北京', 'Shanghai': '上海', 'Tianjin': '天津', 'Chongqing': '重庆',
+    'Hong Kong': '香港', 'Macau': '澳门', 'Taipei': '台北', 'Kaohsiung': '高雄',
+    'Guangzhou': '广州', 'Shenzhen': '深圳', 'Zhuhai': '珠海', 'Shantou': '汕头',
+    'Foshan': '佛山', 'Shaoguan': '韶关', 'Zhanjiang': '湛江', 'Zhaoqing': '肇庆',
+    'Jiangmen': '江门', 'Maoming': '茂名', 'Huizhou': '惠州', 'Meizhou': '梅州',
+    'Shanwei': '汕尾', 'Heyuan': '河源', 'Yangjiang': '阳江', 'Qingyuan': '清远',
+    'Dongguan': '东莞', 'Zhongshan': '中山', 'Chaozhou': '潮州', 'Jieyang': '揭阳', 'Yunfu': '云浮',
+    'Taiyuan': '太原', 'Datong': '大同', 'Yangquan': '阳泉', 'Changzhi': '长治',
+    'Jincheng': '晋城', 'Shuozhou': '朔州', 'Jinzhong': '晋中', 'Yuncheng': '运城',
+    'Xinzhou': '忻州', 'Linfen': '临汾', 'Luliang': '吕梁',
+    'Jinan': '济南', 'Qingdao': '青岛', 'Zibo': '淄博', 'Zaozhuang': '枣庄',
+    'Dongying': '东营', 'Yantai': '烟台', 'Weifang': '潍坊', 'Jining': '济宁',
+    'Taian': '泰安', 'Weihai': '威海', 'Rizhao': '日照', 'Linyi': '临沂',
+    'Dezhou': '德州', 'Liaocheng': '聊城', 'Binzhou': '滨州', 'Heze': '菏泽',
+    'Hangzhou': '杭州', 'Ningbo': '宁波', 'Wenzhou': '温州', 'Jiaxing': '嘉兴',
+    'Huzhou': '湖州', 'Shaoxing': '绍兴', 'Jinhua': '金华', 'Quzhou': '衢州',
+    'Zhoushan': '舟山', 'Taizhou': '台州', 'Lishui': '丽水',
+    'Nanjing': '南京', 'Wuxi': '无锡', 'Xuzhou': '徐州', 'Changzhou': '常州',
+    'Suzhou': '苏州', 'Nantong': '南通', 'Lianyungang': '连云港', 'Huai\'an': '淮安',
+    'Huaian': '淮安', 'Yancheng': '盐城', 'Yangzhou': '扬州', 'Zhenjiang': '镇江',
+    'Taizhou_JS': '泰州', 'Suqian': '宿迁',
+    'Zhengzhou': '郑州', 'Kaifeng': '开封', 'Luoyang': '洛阳', 'Pingdingshan': '平顶山',
+    'Anyang': '安阳', 'Hebi': '鹤壁', 'Xinxiang': '新乡', 'Jiaozuo': '焦作',
+    'Puyang': '濮阳', 'Xuchang': '许昌', 'Luohe': '漯河', 'Sanmenxia': '三门峡',
+    'Nanyang': '南阳', 'Shangqiu': '商丘', 'Xinyang': '信阳', 'Zhoukou': '周口',
+    'Zhumadian': '驻马店', 'Jiyuan': '济源',
+    'Wuhan': '武汉', 'Huangshi': '黄石', 'Shiyan': '十堰', 'Yichang': '宜昌',
+    'Xiangyang': '襄阳', 'Ezhou': '鄂州', 'Jingmen': '荆门', 'Xiaogan': '孝感',
+    'Jingzhou': '荆州', 'Huanggang': '黄冈', 'Xianning': '咸宁', 'Suizhou': '随州',
+    'Enshi': '恩施', 'Xiantao': '仙桃', 'Tianmen': '天门', 'Qianjiang': '潜江',
+    'Changsha': '长沙', 'Zhuzhou': '株洲', 'Xiangtan': '湘潭', 'Hengyang': '衡阳',
+    'Shaoyang': '邵阳', 'Yueyang': '岳阳', 'Changde': '常德', 'Zhangjiajie': '张家界',
+    'Yiyang': '益阳', 'Chenzhou': '郴州', 'Yongzhou': '永州', 'Huaihua': '怀化',
+    'Loudi': '娄底', 'Xiangxi': '湘西',
+    'Chengdu': '成都', 'Zigong': '自贡', 'Panzhihua': '攀zhi花', 'Luzhou': '泸州',
+    'Deyang': '德阳', 'Mianyang': '绵阳', 'Guangyuan': '广元', 'Suining': '遂宁',
+    'Neijiang': '内江', 'Leshan': '乐山', 'Nanchong': '南充', 'Meishan': '眉山',
+    'Yibin': '宜宾', 'Guang\'an': '广安', 'Guangan': '广安', 'Dazhou': '达州',
+    'Ya\'an': '雅安', 'Yaan': '雅安', 'Bazhong': '巴中', 'Ziyang': '资阳',
+    'Aba': '阿坝', 'Ganzi': '甘孜', 'Liangshan': '凉山',
+    'Fuzhou': '福州', 'Xiamen': '厦门', 'Putian': '莆田', 'Sanming': '三明',
+    'Quanzhou': '泉州', 'Zhangzhou': '漳州', 'Nanping': '南平', 'Longyan': '龙岩', 'Ningde': '宁德',
+    'Hefei': '合肥', 'Wuhu': '芜湖', 'Bengbu': '蚌埠', 'Huainan': '淮南',
+    'Ma\'anshan': '马鞍山', 'Maanshan': '马鞍山', 'Huaibei': '淮北', 'Tongling': '铜陵',
+    'Anqing': '安庆', 'Huangshan': '黄山', 'Chuzhou': '滁州', 'Fuyang': '阜阳',
+    'Suzhou_AH': '宿州', 'Lu\'an': '六安', 'Luan': '六安', 'Bozhou': '亳州',
+    'Chizhou': '池州', 'Xuancheng': '宣城',
+    'Shijiazhuang': '石家庄', 'Tangshan': '唐山', 'Qinhuangdao': '秦皇岛', 'Handan': '邯郸',
+    'Xingtai': '邢台', 'Baoding': '保定', 'Zhangjiakou': '张家口', 'Chengde': '承德',
+    'Cangzhou': '沧州', 'Langfang': '廊坊', 'Hengshui': '衡水',
+    'Shenyang': '沈阳', 'Dalian': '大连', 'Anshan': '鞍山', 'Fushun': '抚顺',
+    'Benxi': '本溪', 'Dandong': '丹东', 'Jinzhou': '锦州', 'Yingkou': '营口',
+    'Fuxin': '阜新', 'Liaoyang': '辽阳', 'Panjin': '盘锦', 'Tieling': '铁岭',
+    'Chaoyang': '朝阳', 'Huludao': '葫芦岛',
+    'Changchun': '长春', 'Jilin': '吉林', 'Siping': '四平', 'Liaoyuan': '辽源',
+    'Tonghua': '通化', 'Baishan': '白山', 'Songyuan': '松原', 'Baicheng': '白城', 'Yanbian': '延边',
+    'Harbin': '哈尔滨', 'Qiqihar': '齐齐哈尔', 'Jixi': '鸡西', 'Hegang': '鹤岗',
+    'Shuangyashan': '双鸭山', 'Daqing': '大庆', 'Yichun': '伊春', 'Jiamusi': '佳木斯',
+    'Qitaihe': '七台河', 'Mudanjiang': '牡丹江', 'Heihe': '黑河', 'Suihua': '绥化', 'Daxinganling': '大兴安岭',
+    'Nanchang': '南昌', 'Jingdezhen': '景德镇', 'Pingxiang': '萍乡', 'Jiujiang': '九江',
+    'Xinyu': '新余', 'Yingtan': '鹰潭', 'Ganzhou': '赣州', 'Ji\'an': '吉安', 'Jian': '吉安',
+    'Yichun_JX': '宜春', 'Fuzhou_JX': '抚州', 'Shangrao': '上饶',
+    'Xi\'an': '西安', 'Xian': '西安', 'Tongchuan': '铜川', 'Baoji': '宝鸡',
+    'Xianyang': '咸阳', 'Weinan': '渭南', 'Yan\'an': '延安', 'Yanan': '延安',
+    'Hanzhong': '汉中', 'Yulin': '榆林', 'Ankang': '安康', 'Shangluo': '商洛',
+    'Lanzhou': '兰州', 'Xining': '西宁', 'Yinchuan': '银川', 'Urumqi': '乌鲁木齐',
+    'Lhasa': '拉萨', 'Kashgar': '喀什', 'Korla': '库尔勒', 'Ili': '伊犁',
+    'Nanning': '南宁', 'Liuzhou': '柳州', 'Guilin': '桂林', 'Wuzhou': '梧州',
+    'Beihai': '北海', 'Fangchenggang': '防城港', 'Qinzhou': '钦州', 'Guigang': '贵港',
+    'Yulin_GX': '玉林', 'Baise': '百色', 'Hechi': '河池', 'Hezhou': '贺州', 'Chongzuo': '崇左',
+    'Kunming': '昆明', 'Guiyang': '贵阳', 'Haikou': '海口', 'Sanya': '三亚',
+    'Zunyi': '遵义', 'Dali': '大理', 'Lijiang': '丽江', 'Xishuangbanna': '西双版纳'
+  };
+  return cityMap[city] || city;
 }
