@@ -92,7 +92,7 @@ export async function onRequestGet(context) {
       yesterdayDomainMap[item.domain] = item.domain_total;
     });
 
-    // 5. 查询【今日】与【昨日】城市数据（移除 LIMIT 限制，排列所有城市）
+    // 5. 查询【今日】与【昨日】城市数据（全量列出）
     const cityRankRes = await env.DB.prepare(`
       SELECT country, city, COUNT(*) as city_total 
       FROM visits 
@@ -132,22 +132,20 @@ export async function onRequestGet(context) {
     const todayTableRowsHtml = renderTableRows(todayDetails);
     const yesterdayTableRowsHtml = renderTableRows(yesterdayDetails);
 
-    // 构建【按域名归类】和【按城市归类】的数据映射，方便嵌入排行榜展开层
+    // 构建【按域名归类】和【按城市归类】的数据映射
     const domainDetailsMap = {};
     const cityDetailsMap = {};
 
     todayDetails.forEach(item => {
-      // 域名归类
       if (!domainDetailsMap[item.domain]) domainDetailsMap[item.domain] = [];
       domainDetailsMap[item.domain].push(item);
 
-      // 城市归类 (唯一 Key: 国家_城市)
       const cityKey = `${item.country}_${item.city}`;
       if (!cityDetailsMap[cityKey]) cityDetailsMap[cityKey] = [];
       cityDetailsMap[cityKey].push(item);
     });
 
-    // 1. 生成可展开的域名排行榜 HTML (含昨日对比)
+    // 1. 生成可展开的域名排行榜 HTML
     let domainRankHtml = domainRank.map((item, index) => {
       const domain = item.domain;
       const list = domainDetailsMap[domain] || [];
@@ -173,21 +171,23 @@ export async function onRequestGet(context) {
           <td colspan="4" class="detail-cell">
             <div class="inner-table-wrapper">
               <div class="inner-title">🌐 域名 <strong>${escapeHtml(punycodeToUnicode(domain))}</strong> 今日访问明细：</div>
-              <table>
-                <thead>
-                  <tr><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
-                </thead>
-                <tbody>
-                  ${innerRows || '<tr><td colspan="4" style="text-align:center;">暂无明细记录</td></tr>'}
-                </tbody>
-              </table>
+              <div class="scroll-x">
+                <table>
+                  <thead>
+                    <tr><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
+                  </thead>
+                  <tbody>
+                    ${innerRows || '<tr><td colspan="4" style="text-align:center;">暂无明细记录</td></tr>'}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </td>
         </tr>
       `;
     }).join('');
 
-    // 2. 生成可展开的城市排行榜 HTML (含昨日对比，已全量列出)
+    // 2. 生成可展开的城市排行榜 HTML
     let cityRankHtml = cityRank.map((item, index) => {
       const cityKey = `${item.country}_${item.city}`;
       const list = cityDetailsMap[cityKey] || [];
@@ -213,14 +213,16 @@ export async function onRequestGet(context) {
           <td colspan="5" class="detail-cell">
             <div class="inner-table-wrapper">
               <div class="inner-title">🏙️ 城市 <strong>${translateCity(item.city)}</strong> 今日来源域名与时间明细：</div>
-              <table>
-                <thead>
-                  <tr><th>访问时间 (北京时间)</th><th>被访问域名</th><th>访客 IP</th></tr>
-                </thead>
-                <tbody>
-                  ${innerRows || '<tr><td colspan="3" style="text-align:center;">暂无明细记录</td></tr>'}
-                </tbody>
-              </table>
+              <div class="scroll-x">
+                <table>
+                  <thead>
+                    <tr><th>访问时间 (北京时间)</th><th>被访问域名</th><th>访客 IP</th></tr>
+                  </thead>
+                  <tbody>
+                    ${innerRows || '<tr><td colspan="3" style="text-align:center;">暂无明细记录</td></tr>'}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </td>
         </tr>
@@ -241,7 +243,7 @@ export async function onRequestGet(context) {
           .header { text-align: center; margin-bottom: 20px; }
           .header h1 { margin: 0; color: #1a1a1a; font-size: 22px; }
           
-          /* 核心手机端横向并排 CSS 布局 */
+          /* 移动端卡片横向并排 */
           .stats-grid { 
             display: grid; 
             grid-template-columns: repeat(2, 1fr); 
@@ -262,8 +264,21 @@ export async function onRequestGet(context) {
           .chart-container { position: relative; width: 100%; height: 220px; margin-top: 10px; }
           canvas { width: 100%!important; height: 100%!important; }
 
+          /* 全局横向表格控制样式 */
+          .scroll-x {
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+          }
+
           table { width: 100%; border-collapse: collapse; margin-top: 4px; }
-          th, td { border: 1px solid #eef0f3; padding: 10px; text-align: left; font-size: 13px; }
+          th, td { 
+            border: 1px solid #eef0f3; 
+            padding: 8px 10px; 
+            text-align: left; 
+            font-size: 13px; 
+            white-space: nowrap; /* 强制单行横向拉伸，绝不挤压变形拉高表格 */
+          }
           th { background-color: #f8f9fa; color: #555; }
 
           /* 可点击行样式 */
@@ -271,9 +286,9 @@ export async function onRequestGet(context) {
           tr.clickable-row:hover { background-color: #f0f7ff!important; }
           .arrow-icon { font-size: 10px; color: #888; margin-left: 6px; display: inline-block; transition: transform 0.2s ease; }
 
-          /* 嵌套明细表格 */
+          /* 嵌套明细表格横向化 */
           .detail-cell { padding: 0!important; background-color: #fcfdfe!important; }
-          .inner-table-wrapper { padding: 12px 16px; background: #f4f8fb; border-bottom: 2px solid #e1e9f0; }
+          .inner-table-wrapper { padding: 10px 12px; background: #f4f8fb; border-bottom: 2px solid #e1e9f0; }
           .inner-title { font-size: 12px; color: #444; margin-bottom: 8px; font-weight: 500; }
           .inner-table-wrapper table { background: #fff; }
           .inner-table-wrapper th { background-color: #eaf2f9; }
@@ -287,14 +302,15 @@ export async function onRequestGet(context) {
           .pv-count { color: #27ae60; font-weight: bold; }
           .pv-yesterday { color: #8e44ad; font-weight: bold; }
 
-          /* 手机移动端自适应保持横向排列微调 */
+          /* 手机移动端全面横向适配 */
           @media (max-width: 600px) {
             body { padding: 10px; }
             .stats-grid { gap: 10px; }
-            .stat-card { padding: 12px 8px; }
-            .stat-card .num { font-size: 20px; }
-            .stat-card .label { font-size: 12px; }
-            .stat-card .tip { font-size: 10px; }
+            .stat-card { padding: 10px 6px; }
+            .stat-card .num { font-size: 18px; }
+            .stat-card .label { font-size: 11px; }
+            .stat-card .tip { font-size: 9px; }
+            th, td { padding: 6px 8px; font-size: 12px; }
           }
         </style>
       </head>
@@ -304,7 +320,7 @@ export async function onRequestGet(context) {
             <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
-          <!-- 1. 顶部概览（保留手机横向并排模式） -->
+          <!-- 1. 顶部概览（手机卡片并排） -->
           <div class="stats-grid">
             <div class="stat-card" onclick="toggleElement('today-detail-panel', 'today-icon')">
               <div class="label">今日访问量</div>
@@ -318,13 +334,13 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 今日全量明细面板 -->
+          <!-- 今日全量明细面板（横向无缝滚动） -->
           <div class="panel" id="today-detail-panel" style="display: none; border: 2px solid #0066ff;">
             <h2 class="panel-title" style="color: #0066ff;">
               📋 今日全量访问明细（共 ${todayVisits} 条记录）
               <span class="sub-tip">⏱️ 今日 00:00 至今</span>
             </h2>
-            <div style="overflow-x: auto; max-height: 400px;">
+            <div class="scroll-x" style="max-height: 400px; overflow-y: auto;">
               <table>
                 <thead>
                   <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
@@ -336,13 +352,13 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 昨日全量明细面板 -->
+          <!-- 昨日全量明细面板（横向无缝滚动） -->
           <div class="panel" id="yesterday-detail-panel" style="display: none; border: 2px solid #8e44ad;">
             <h2 class="panel-title" style="color: #8e44ad;">
               📜 昨日全量访问明细（共 ${yesterdayVisits} 条记录）
               <span class="sub-tip" style="color: #8e44ad;">⏱️ 昨日全天</span>
             </h2>
-            <div style="overflow-x: auto; max-height: 400px;">
+            <div class="scroll-x" style="max-height: 400px; overflow-y: auto;">
               <table>
                 <thead>
                   <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
@@ -362,13 +378,13 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 3. 今日域名排行榜（点击整行展开明细） -->
+          <!-- 3. 今日域名排行榜（支持横向滚动） -->
           <div class="panel">
             <h2 class="panel-title">
               🏆 今日域名流量排行榜 (点击展开明细)
               <span class="sub-tip">⏱️ 包含昨日数据对比</span>
             </h2>
-            <div style="overflow-x: auto;">
+            <div class="scroll-x">
               <table>
                 <thead>
                   <tr>
@@ -385,13 +401,13 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 4. 城市排行榜（点击整行展开明细） -->
+          <!-- 4. 城市排行榜（支持横向滚动） -->
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问城市排行榜 (点击展开明细)
               <span class="sub-tip">⏱️ 已列出所有城市及昨日对比</span>
             </h2>
-            <div style="overflow-x: auto;">
+            <div class="scroll-x">
               <table>
                 <thead>
                   <tr>
@@ -521,13 +537,12 @@ export async function onRequestGet(context) {
   }
 }
 
-// 解决“全显示香港”的真实归属地精确解析核心函数
+// 解决“全显示香港”的真实归属地精确解析逻辑
 export async function handleVisitRecord(request, env) {
   const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for")?.split(',')[0] || "Unknown";
   let country = request.cf?.country || "Unknown";
   let city = request.cf?.city || "Unknown";
 
-  // 当识别为香港节点或者解析不到具体城市时，实时使用在线接口精准修正
   if (city === "Unknown" || city === "Hong Kong" || country === "HK") {
     try {
       const geoRes = await fetch(`http://ip-api.com/json/${ip}?lang=zh-CN`);
@@ -539,7 +554,7 @@ export async function handleVisitRecord(request, env) {
         }
       }
     } catch (e) {
-      // 捕获异常，保证上报流程不中断
+      // 捕获异常
     }
   }
 
