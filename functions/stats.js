@@ -23,6 +23,29 @@ export async function onRequestGet(context) {
     const todayDateExpr = "DATE('now', '+8 hours')";
     const yesterdayDateExpr = "DATE('now', '+8 hours', '-1 day')";
 
+    // 【新增】实时轮询数据接口 (前端 AJAX 请求实时数据)
+    if (url.searchParams.get("action") === "realtime") {
+      const latestRes = await env.DB.prepare(`
+        SELECT domain, ip, country, city, visit_time 
+        FROM visits 
+        ORDER BY id DESC LIMIT 5
+      `).all();
+      
+      const rawRecords = latestRes?.results || [];
+      const formattedRecords = rawRecords.map(r => ({
+        domain: punycodeToUnicode(r.domain),
+        ip: r.ip || 'Unknown',
+        country: translateCountry(r.country),
+        city: translateCity(r.city),
+        time: formatDate(r.visit_time),
+        rawTime: r.visit_time
+      }));
+
+      return new Response(JSON.stringify(formattedRecords), {
+        headers: { "Content-Type": "application/json; charset=utf-8" }
+      });
+    }
+
     // 1. 获取【今日访问量】与【昨日访问量】
     const todayRes = await env.DB.prepare(`
       SELECT COUNT(*) as count FROM visits 
@@ -247,6 +270,13 @@ export async function onRequestGet(context) {
           .container { max-width: 1000px; margin: 0 auto; }
           .header { text-align: center; margin-bottom: 20px; }
           .header h1 { margin: 0; color: #1a1a1a; font-size: 22px; }
+
+          /* 【新增】实时监控状态栏样式 */
+          .realtime-bar { background: #e6f7ff; border: 1px solid #91d5ff; border-radius: 8px; padding: 10px 16px; margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; }
+          .realtime-status { display: flex; align-items: center; font-size: 13px; color: #0050b3; font-weight: 500; }
+          .pulse-dot { width: 8px; height: 8px; background: #52c41a; border-radius: 50%; margin-right: 8px; box-shadow: 0 0 0 0 rgba(82,196,26,0.7); animation: pulse 1.6s infinite; }
+          @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(82,196,26,0.7); } 70% { box-shadow: 0 0 0 6px rgba(82,196,26,0); } 100% { box-shadow: 0 0 0 0 rgba(82,196,26,0); } }
+          .new-visitor-toast { background: #ff4d4f; color: #fff; font-size: 12px; padding: 4px 10px; border-radius: 20px; cursor: pointer; display: none; }
           
           /* 移动端卡片横向并排 */
           .stats-grid { 
@@ -325,11 +355,22 @@ export async function onRequestGet(context) {
             <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
+          <!-- 【新增】实时更新动态提醒栏 -->
+          <div class="realtime-bar">
+            <div class="realtime-status">
+              <div class="pulse-dot"></div>
+              <span>实时监测中 (每 5 秒同步最新访客)</span>
+            </div>
+            <div id="newVisitorToast" class="new-visitor-toast" onclick="location.reload()">
+              🔔 收到新访客数据，点击刷新更新看板
+            </div>
+          </div>
+
           <!-- 1. 顶部概览（手机卡片并排） -->
           <div class="stats-grid">
             <div class="stat-card" onclick="toggleElement('today-detail-panel', 'today-icon')">
               <div class="label">今日访问量</div>
-              <div class="num">${todayVisits}</div>
+              <div class="num" id="todayVisitsNum">${todayVisits}</div>
               <div class="tip">👇 点击展开/收起今日明细 <span id="today-icon">▼</span></div>
             </div>
             <div class="stat-card" onclick="toggleElement('yesterday-detail-panel', 'yesterday-icon')">
@@ -350,7 +391,7 @@ export async function onRequestGet(context) {
                 <thead>
                   <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
                 </thead>
-                <tbody>
+                <tbody id="todayTableBody">
                   ${todayTableRowsHtml}
                 </tbody>
               </table>
@@ -449,6 +490,24 @@ export async function onRequestGet(context) {
               if (icon) icon.innerText = '▼';
             }
           }
+
+          // 【新增】实时轮询模块 JS 逻辑
+          let lastSeenTime = "${todayDetails[0]?.visit_time || ''}";
+          
+          async function checkRealtimeVisits() {
+            try {
+              const res = await fetch(window.location.pathname + window.location.search + "&action=realtime");
+              if (!res.ok) return;
+              const data = await res.json();
+              if (data && data.length > 0) {
+                const latestRecord = data[0];
+                if (lastSeenTime && latestRecord.rawTime !== lastSeenTime) {
+                  document.getElementById("newVisitorToast").style.display = "inline-block";
+                }
+              }
+            } catch(e) {}
+          }
+          setInterval(checkRealtimeVisits, 5000);
 
           (function drawChart() {
             const chartData = ${JSON.stringify(last7DaysData)};
@@ -679,7 +738,7 @@ function translateCity(city) {
     'Shaoyang': '邵阳', 'Yueyang': '岳阳', 'Changde': '常德', 'Zhangjiajie': '张家界',
     'Yiyang': '益阳', 'Chenzhou': '郴州', 'Yongzhou': '永州', 'Huaihua': '怀化',
     'Loudi': '娄底', 'Xiangxi': '湘西',
-    'Chengdu': '成都', 'Zigong': '自贡', 'Panzhihua': '攀枝花', 'Luzhou': '泸州',
+    'Chengdu': '成都', 'Zigong': '自贡', 'Panzhihua': '攀zhi花', 'Luzhou': '泸州',
     'Deyang': '德阳', 'Mianyang': '绵阳', 'Guangyuan': '广元', 'Suining': '遂宁',
     'Neijiang': '内江', 'Leshan': '乐山', 'Nanchong': '南充', 'Meishan': '眉山',
     'Yibin': '宜宾', 'Guang\'an': '广安', 'Guangan': '广安', 'Dazhou': '达州',
