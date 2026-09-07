@@ -187,7 +187,7 @@ export async function onRequestGet(context) {
           .header-right { display: flex; align-items: center; gap: 20px; }
           .clock-box { font-family: monospace; font-size: 16px; color: #00f0ff; text-shadow: 0 0 8px rgba(0,240,255,0.5); }
           
-          /* 页面底部静态控制栏（非悬浮） */
+          /* 页面底部静态常驻控制栏（嵌入式布局，跟随页面滚动） */
           .bottom-sound-bar {
             width: 100%;
             padding: 30px 0 40px 0;
@@ -198,9 +198,9 @@ export async function onRequestGet(context) {
           }
           .sound-toggle {
             background: rgba(13, 20, 32, 0.9);
-            border: 1px solid rgba(255, 215, 0, 0.4);
+            border: 1px solid rgba(255, 215, 0, 0.5);
             color: #ffd700;
-            padding: 10px 24px;
+            padding: 10px 26px;
             border-radius: 30px;
             font-size: 14px;
             font-weight: bold;
@@ -210,16 +210,19 @@ export async function onRequestGet(context) {
             gap: 8px;
             transition: all 0.3s ease;
             user-select: none;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
           }
           .sound-toggle:hover {
             border-color: #ffd700;
-            background: rgba(255, 215, 0, 0.1);
-            box-shadow: 0 0 15px rgba(255, 215, 0, 0.3);
+            background: rgba(255, 215, 0, 0.15);
+            box-shadow: 0 0 20px rgba(255, 215, 0, 0.4);
+            transform: translateY(-2px);
           }
           .sound-toggle.muted {
             color: #8a99ad;
             border-color: rgba(255, 255, 255, 0.2);
             background: rgba(13, 20, 32, 0.6);
+            box-shadow: none;
           }
 
           .grid-container {
@@ -532,7 +535,7 @@ export async function onRequestGet(context) {
           </div>
         </div>
 
-        <!-- 页面最底部静态常驻控制按钮 (跟随页面滚动，不悬浮) -->
+        <!-- 页面底部静态控制按钮 (自然嵌入布局，跟随页面滚动) -->
         <div class="bottom-sound-bar">
           <button class="sound-toggle" id="soundBtn" onclick="toggleSound()">
             <span id="soundIcon">🔊</span> <span id="soundText">进账提示音：已开启</span>
@@ -540,17 +543,24 @@ export async function onRequestGet(context) {
         </div>
 
         <script>
-          // =============== 音效控制 (2秒+长延音金币到账全效音) ===============
+          // =============== 音效控制 (2.2秒长延音金币到账全效音，解决浏览器Autoplay拦截) ===============
           let soundEnabled = true;
           let audioCtx = null;
 
           function initAudio() {
             if (!audioCtx) {
-              audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+              const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+              if (AudioContextClass) {
+                audioCtx = new AudioContextClass();
+              }
+            }
+            if (audioCtx && audioCtx.state === 'suspended') {
+              audioCtx.resume();
             }
           }
 
           function toggleSound() {
+            initAudio(); // 每次点击时显式激活音频上下文
             soundEnabled = !soundEnabled;
             const btn = document.getElementById('soundBtn');
             const icon = document.getElementById('soundIcon');
@@ -572,47 +582,49 @@ export async function onRequestGet(context) {
             if (!soundEnabled) return;
             try {
               initAudio();
-              if (audioCtx.state === 'suspended') audioCtx.resume();
+              if (!audioCtx) return;
               
               const now = audioCtx.currentTime;
 
-              // 第 1 个金币落盘音 (880Hz)
+              // 音阶 1: 金币落地前奏 (880Hz)
               const osc1 = audioCtx.createOscillator();
               const gain1 = audioCtx.createGain();
               osc1.type = 'sine';
               osc1.frequency.setValueAtTime(880, now);
-              gain1.gain.setValueAtTime(0.2, now);
+              gain1.gain.setValueAtTime(0.3, now);
               gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
               osc1.connect(gain1);
               gain1.connect(audioCtx.destination);
               osc1.start(now);
               osc1.stop(now + 0.15);
 
-              // 第 2 个主金币音 (1320Hz)
+              // 音阶 2: 金币撞击清脆音 (1320Hz)
               const osc2 = audioCtx.createOscillator();
               const gain2 = audioCtx.createGain();
               osc2.type = 'sine';
               osc2.frequency.setValueAtTime(1320, now + 0.08);
-              gain2.gain.setValueAtTime(0.3, now + 0.08);
+              gain2.gain.setValueAtTime(0.4, now + 0.08);
               gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
               osc2.connect(gain2);
               gain2.connect(audioCtx.destination);
               osc2.start(now + 0.08);
               osc2.stop(now + 0.3);
 
-              // 第 3 个高音阶 + 长延音余音 (1760Hz -> 2.2 秒缓慢衰减)
+              // 音阶 3: 高频金币回响 + 2.2 秒缓慢余音衰减 (1760Hz)
               const osc3 = audioCtx.createOscillator();
               const gain3 = audioCtx.createGain();
               osc3.type = 'sine';
               osc3.frequency.setValueAtTime(1760, now + 0.15);
-              gain3.gain.setValueAtTime(0.35, now + 0.15);
+              gain3.gain.setValueAtTime(0.45, now + 0.15);
               gain3.gain.exponentialRampToValueAtTime(0.0001, now + 2.2);
               osc3.connect(gain3);
               gain3.connect(audioCtx.destination);
               osc3.start(now + 0.15);
               osc3.stop(now + 2.2);
 
-            } catch(e){}
+            } catch(e) {
+              console.error("Audio error:", e);
+            }
           }
 
           // =============== 撒金币雨特效 (Canvas 粒子系统) ===============
@@ -770,7 +782,7 @@ export async function onRequestGet(context) {
                   showToast(newest);
                   triggerCashEffect(); // 飘字
                   spawnCoinRain();     // 撒金币雨
-                  playCoinSound();     // 播放 2 秒到账音效
+                  playCoinSound();     // 播放 2.2 秒到账音效
 
                   const stream = document.getElementById('feedStream');
                   if (stream) {
@@ -824,8 +836,10 @@ export async function onRequestGet(context) {
             } catch (e) {}
           }
 
-          // 首次点击页面解锁浏览器的音频自动播放限制
-          window.addEventListener('click', () => { initAudio(); }, { once: true });
+          // 用户在页面上进行任意交互时自动解锁音频播放权限
+          ['click', 'touchstart', 'keydown'].forEach(evt => {
+            window.addEventListener(evt, () => { initAudio(); }, { once: true });
+          });
 
           setInterval(pollRealtimeData, 3000);
         </script>
