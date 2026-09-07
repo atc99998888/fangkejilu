@@ -167,30 +167,7 @@ async function resolveBestGlobalGeo(ip, requestCf) {
     return globalIpCache.get(cleanIp);
   }
 
-  // 1. 优先使用 Cloudflare 原生 GeoIP 节点判定（对香港、台湾、海外 IP 100% 精准且无延迟）
-  if (requestCf) {
-    const cfCountry = requestCf.country || '';
-    const cfCity = requestCf.city || '';
-    const cfRegion = requestCf.region || '';
-
-    if (cfCountry === 'HK') {
-      const result = { country: 'HK', city: '香港特别行政区' };
-      globalIpCache.set(cleanIp, result);
-      return result;
-    }
-    if (cfCountry === 'MO') {
-      const result = { country: 'MO', city: '澳门特别行政区' };
-      globalIpCache.set(cleanIp, result);
-      return result;
-    }
-    if (cfCountry === 'TW') {
-      const result = { country: 'TW', city: '台湾省' };
-      globalIpCache.set(cleanIp, result);
-      return result;
-    }
-  }
-
-  // 2. 备用外部 API 查询
+  // 优先通过第三方接口查询 IP 对应的具体地区
   const promises = [
     apiIpWhoIsIo(cleanIp),
     apiIpSb(cleanIp),
@@ -207,7 +184,7 @@ async function resolveBestGlobalGeo(ip, requestCf) {
         if (!bestResult || res.value.score > bestResult.score) {
           bestResult = res.value;
         }
-        if (bestResult.score >= 5) break;
+        if (bestResult.score >= 4) break;
       }
     }
 
@@ -220,7 +197,7 @@ async function resolveBestGlobalGeo(ip, requestCf) {
     console.error("IP解析异常:", e);
   }
 
-  // 根据 CF 节点降级处理，避免盲目显示“中国”
+  // 仅在第三方接口均失败时，才使用 Cloudflare 节点保底
   const fallbackCountry = requestCf?.country || 'CN';
   let fallbackCity = '未知地区';
   if (fallbackCountry === 'HK') fallbackCity = '香港特别行政区';
@@ -819,7 +796,6 @@ function formatDate(utcString) {
   }
 }
 
-// 完善的国家/地区映射逻辑
 function translateCountry(code) {
   const countryMap = {
     'CN': '🇨🇳 中国大陆',
