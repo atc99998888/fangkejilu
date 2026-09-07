@@ -132,7 +132,7 @@ export async function onRequestGet(context) {
     const todayTableRowsHtml = renderTableRows(todayDetails);
     const yesterdayTableRowsHtml = renderTableRows(yesterdayDetails);
 
-    // 构建【按域名归类】和【按城市归类】的数据映射
+    // 构建【按域名归类】和【按城市归类】的数据映射，方便嵌入排行榜展开层
     const domainDetailsMap = {};
     const cityDetailsMap = {};
 
@@ -147,7 +147,7 @@ export async function onRequestGet(context) {
       cityDetailsMap[cityKey].push(item);
     });
 
-    // 1. 生成可展开的域名排行榜 HTML
+    // 1. 生成可展开的域名排行榜 HTML (含昨日对比)
     let domainRankHtml = domainRank.map((item, index) => {
       const domain = item.domain;
       const list = domainDetailsMap[domain] || [];
@@ -187,7 +187,7 @@ export async function onRequestGet(context) {
       `;
     }).join('');
 
-    // 2. 生成可展开的城市排行榜 HTML
+    // 2. 生成可展开的城市排行榜 HTML (含昨日对比，已全量列出)
     let cityRankHtml = cityRank.map((item, index) => {
       const cityKey = `${item.country}_${item.city}`;
       const list = cityDetailsMap[cityKey] || [];
@@ -241,7 +241,14 @@ export async function onRequestGet(context) {
           .header { text-align: center; margin-bottom: 20px; }
           .header h1 { margin: 0; color: #1a1a1a; font-size: 22px; }
           
-          .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
+          /* 核心手机端横向并排 CSS 布局 */
+          .stats-grid { 
+            display: grid; 
+            grid-template-columns: repeat(2, 1fr); 
+            gap: 16px; 
+            margin-bottom: 20px; 
+          }
+          
           .stat-card { background: #fff; padding: 16px 20px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); text-align: center; cursor: pointer; transition: all 0.2s ease; border: 1px solid transparent; }
           .stat-card:hover { border-color: #0066ff; box-shadow: 0 4px 12px rgba(0,102,255,0.15); transform: translateY(-2px); }
           .stat-card .num { font-size: 24px; font-weight: bold; color: #0066ff; margin-top: 4px; }
@@ -259,10 +266,12 @@ export async function onRequestGet(context) {
           th, td { border: 1px solid #eef0f3; padding: 10px; text-align: left; font-size: 13px; }
           th { background-color: #f8f9fa; color: #555; }
 
+          /* 可点击行样式 */
           tr.clickable-row { cursor: pointer; transition: background-color 0.15s ease; }
           tr.clickable-row:hover { background-color: #f0f7ff!important; }
           .arrow-icon { font-size: 10px; color: #888; margin-left: 6px; display: inline-block; transition: transform 0.2s ease; }
 
+          /* 嵌套明细表格 */
           .detail-cell { padding: 0!important; background-color: #fcfdfe!important; }
           .inner-table-wrapper { padding: 12px 16px; background: #f4f8fb; border-bottom: 2px solid #e1e9f0; }
           .inner-title { font-size: 12px; color: #444; margin-bottom: 8px; font-weight: 500; }
@@ -277,6 +286,16 @@ export async function onRequestGet(context) {
           .rank-3 { background: #cd7f32; color: #fff; }
           .pv-count { color: #27ae60; font-weight: bold; }
           .pv-yesterday { color: #8e44ad; font-weight: bold; }
+
+          /* 手机移动端自适应保持横向排列微调 */
+          @media (max-width: 600px) {
+            body { padding: 10px; }
+            .stats-grid { gap: 10px; }
+            .stat-card { padding: 12px 8px; }
+            .stat-card .num { font-size: 20px; }
+            .stat-card .label { font-size: 12px; }
+            .stat-card .tip { font-size: 10px; }
+          }
         </style>
       </head>
       <body>
@@ -285,19 +304,21 @@ export async function onRequestGet(context) {
             <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
+          <!-- 1. 顶部概览（保留手机横向并排模式） -->
           <div class="stats-grid">
             <div class="stat-card" onclick="toggleElement('today-detail-panel', 'today-icon')">
               <div class="label">今日访问量</div>
               <div class="num">${todayVisits}</div>
-              <div class="tip">👇 点击展开/收起今日访问明细 <span id="today-icon">▼</span></div>
+              <div class="tip">👇 点击展开/收起今日明细 <span id="today-icon">▼</span></div>
             </div>
             <div class="stat-card" onclick="toggleElement('yesterday-detail-panel', 'yesterday-icon')">
               <div class="label">昨日访问量</div>
               <div class="num">${yesterdayVisits}</div>
-              <div class="tip">👇 点击展开/收起昨日访问明细 <span id="yesterday-icon">▼</span></div>
+              <div class="tip">👇 点击展开/收起昨日明细 <span id="yesterday-icon">▼</span></div>
             </div>
           </div>
 
+          <!-- 今日全量明细面板 -->
           <div class="panel" id="today-detail-panel" style="display: none; border: 2px solid #0066ff;">
             <h2 class="panel-title" style="color: #0066ff;">
               📋 今日全量访问明细（共 ${todayVisits} 条记录）
@@ -315,6 +336,7 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
+          <!-- 昨日全量明细面板 -->
           <div class="panel" id="yesterday-detail-panel" style="display: none; border: 2px solid #8e44ad;">
             <h2 class="panel-title" style="color: #8e44ad;">
               📜 昨日全量访问明细（共 ${yesterdayVisits} 条记录）
@@ -332,6 +354,7 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
+          <!-- 2. 最近 7 天访问趋势图 -->
           <div class="panel">
             <h2 class="panel-title">📈 最近 7 天访问趋势图</h2>
             <div class="chart-container">
@@ -339,6 +362,7 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
+          <!-- 3. 今日域名排行榜（点击整行展开明细） -->
           <div class="panel">
             <h2 class="panel-title">
               🏆 今日域名流量排行榜 (点击展开明细)
@@ -361,6 +385,7 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
+          <!-- 4. 城市排行榜（点击整行展开明细） -->
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问城市排行榜 (点击展开明细)
@@ -496,13 +521,13 @@ export async function onRequestGet(context) {
   }
 }
 
-// 收集数据（上报）时调用的 IP 及地理位置优化解析逻辑
+// 解决“全显示香港”的真实归属地精确解析核心函数
 export async function handleVisitRecord(request, env) {
   const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for")?.split(',')[0] || "Unknown";
   let country = request.cf?.country || "Unknown";
   let city = request.cf?.city || "Unknown";
 
-  // 如果 CF 判定为香港或者无法获取具体城市，使用第三方 API 兜底解析真正真实归属地
+  // 当识别为香港节点或者解析不到具体城市时，实时使用在线接口精准修正
   if (city === "Unknown" || city === "Hong Kong" || country === "HK") {
     try {
       const geoRes = await fetch(`http://ip-api.com/json/${ip}?lang=zh-CN`);
@@ -514,7 +539,7 @@ export async function handleVisitRecord(request, env) {
         }
       }
     } catch (e) {
-      // 容错忽略
+      // 捕获异常，保证上报流程不中断
     }
   }
 
@@ -634,7 +659,7 @@ function translateCity(city) {
     'Shaoyang': '邵阳', 'Yueyang': '岳阳', 'Changde': '常德', 'Zhangjiajie': '张家界',
     'Yiyang': '益阳', 'Chenzhou': '郴州', 'Yongzhou': '永州', 'Huaihua': '怀化',
     'Loudi': '娄底', 'Xiangxi': '湘西',
-    'Chengdu': '成都', 'Zigong': '自贡', 'Panzhihua': '攀zhi花', 'Luzhou': '泸州',
+    'Chengdu': '成都', 'Zigong': '自贡', 'Panzhihua': '攀枝花', 'Luzhou': '泸州',
     'Deyang': '德阳', 'Mianyang': '绵阳', 'Guangyuan': '广元', 'Suining': '遂宁',
     'Neijiang': '内江', 'Leshan': '乐山', 'Nanchong': '南充', 'Meishan': '眉山',
     'Yibin': '宜宾', 'Guang\'an': '广安', 'Guangan': '广安', 'Dazhou': '达州',
