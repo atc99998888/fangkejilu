@@ -148,6 +148,18 @@ export async function onRequestGet(context) {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             overflow-x: hidden;
           }
+
+          /* 全屏金币雨 Canvas */
+          #coinCanvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none;
+            z-index: 9998;
+          }
+
           .dashboard-header {
             display: flex;
             justify-content: space-between;
@@ -171,8 +183,28 @@ export async function onRequestGet(context) {
           }
           @keyframes pulse { 0% { opacity: 0.7; } 50% { opacity: 1; } 100% { opacity: 0.7; } }
           .title-area h1 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: 1px; background: linear-gradient(90deg, #fff, #00f0ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+          
+          .header-right { display: flex; align-items: center; gap: 20px; }
           .clock-box { font-family: monospace; font-size: 16px; color: #00f0ff; text-shadow: 0 0 8px rgba(0,240,255,0.5); }
           
+          /* 音效控制按钮 */
+          .sound-toggle {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(0, 240, 255, 0.3);
+            color: #00f0ff;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+            user-select: none;
+          }
+          .sound-toggle:hover { background: rgba(0, 240, 255, 0.2); }
+          .sound-toggle.muted { color: #8a99ad; border-color: rgba(255, 255, 255, 0.2); }
+
           .grid-container {
             display: grid;
             grid-template-columns: 2.2fr 1fr;
@@ -255,7 +287,7 @@ export async function onRequestGet(context) {
             100% { transform: scale(1); filter: drop-shadow(0 0 0px #ffd700); }
           }
 
-          /* 屏幕中央漂浮收益特效 (+￥8.00) */
+          /* 屏幕中央漂浮收益特效 (新增收入) */
           .cash-float-container {
             position: fixed;
             top: 40%;
@@ -265,8 +297,8 @@ export async function onRequestGet(context) {
             z-index: 10000;
           }
           .cash-float-item {
-            font-family: 'Impact', sans-serif;
-            font-size: 56px;
+            font-family: 'Impact', -apple-system, sans-serif;
+            font-size: 48px;
             font-weight: 900;
             color: #ffd700;
             text-shadow: 0 0 20px #ff0055, 0 0 40px #ffd700;
@@ -343,7 +375,6 @@ export async function onRequestGet(context) {
           .progress-bar { height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; overflow: hidden; }
           .progress-fill { height: 100%; background: linear-gradient(90deg, #ff0055, #ffd700, #00f0ff); border-radius: 3px; transition: width 0.5s ease; }
 
-          /* 高大上的大数据中心侧边卡片 */
           .bigdata-panel {
             background: radial-gradient(circle at top left, rgba(0,240,255,0.15), rgba(0,0,0,0.4));
             border: 1px solid rgba(0, 240, 255, 0.25);
@@ -416,6 +447,7 @@ export async function onRequestGet(context) {
       </head>
       <body>
 
+        <canvas id="coinCanvas"></canvas>
         <div class="cash-float-container" id="cashFloatBox"></div>
         <div class="live-toast-container" id="toastContainer"></div>
 
@@ -424,7 +456,12 @@ export async function onRequestGet(context) {
             <span class="live-tag">GLOBAL LIVE</span>
             <h1>全球直播流量大数据控制中心</h1>
           </div>
-          <div class="clock-box" id="liveClock">00:00:00</div>
+          <div class="header-right">
+            <button class="sound-toggle" id="soundBtn" onclick="toggleSound()">
+              <span id="soundIcon">🔔</span> <span id="soundText">音效已开启</span>
+            </button>
+            <div class="clock-box" id="liveClock">00:00:00</div>
+          </div>
         </div>
 
         <div class="grid-container">
@@ -475,13 +512,148 @@ export async function onRequestGet(context) {
               </div>
               <div class="stat-metric">
                 <span>流量转化溢价</span>
-                <strong>+ ¥ 8.00 / Visit</strong>
+                <strong>实时动态换算</strong>
               </div>
             </div>
           </div>
         </div>
 
         <script>
+          // =============== 音效控制 (Web Audio API) ===============
+          let soundEnabled = true;
+          let audioCtx = null;
+
+          function initAudio() {
+            if (!audioCtx) {
+              audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+          }
+
+          function toggleSound() {
+            soundEnabled = !soundEnabled;
+            const btn = document.getElementById('soundBtn');
+            const icon = document.getElementById('soundIcon');
+            const text = document.getElementById('soundText');
+            if (soundEnabled) {
+              btn.classList.remove('muted');
+              icon.innerText = '🔔';
+              text.innerText = '音效已开启';
+              playCoinSound();
+            } else {
+              btn.classList.add('muted');
+              icon.innerText = '🔕';
+              text.innerText = '静音模式';
+            }
+          }
+
+          // 播放金币清脆进账清脆清响
+          function playCoinSound() {
+            if (!soundEnabled) return;
+            try {
+              initAudio();
+              if (audioCtx.state === 'suspended') audioCtx.resume();
+              
+              const now = audioCtx.currentTime;
+              const osc = audioCtx.createOscillator();
+              const gain = audioCtx.createGain();
+
+              osc.type = 'sine';
+              osc.frequency.setValueAtTime(987.77, now); // B5 调高音
+              osc.frequency.exponentialRampToValueAtTime(1318.51, now + 0.08); // E6 调更高音
+
+              gain.gain.setValueAtTime(0.3, now);
+              gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+
+              osc.connect(gain);
+              gain.connect(audioCtx.destination);
+
+              osc.start(now);
+              osc.stop(now + 0.35);
+            } catch(e){}
+          }
+
+          // =============== 撒金币雨特效 (Canvas 粒子系统) ===============
+          const canvas = document.getElementById('coinCanvas');
+          const ctx = canvas.getContext('2d');
+          let coins = [];
+
+          function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+          }
+          window.addEventListener('resize', resizeCanvas);
+          resizeCanvas();
+
+          class Coin {
+            constructor() {
+              this.x = Math.random() * canvas.width;
+              this.y = -20;
+              this.size = Math.random() * 8 + 10;
+              this.speedY = Math.random() * 5 + 4;
+              this.speedX = (Math.random() - 0.5) * 2;
+              this.rotation = Math.random() * 360;
+              this.rotSpeed = Math.random() * 10 + 5;
+              this.scaleY = 1;
+              this.scaleSpeed = Math.random() * 0.1 + 0.05;
+              this.opacity = 1;
+            }
+            update() {
+              this.y += this.speedY;
+              this.x += this.speedX;
+              this.rotation += this.rotSpeed;
+              this.scaleY = Math.sin(this.rotation * Math.PI / 180);
+              if (this.y > canvas.height - 50) {
+                this.opacity -= 0.03;
+              }
+            }
+            draw() {
+              ctx.save();
+              ctx.translate(this.x, this.y);
+              ctx.scale(1, this.scaleY);
+              ctx.globalAlpha = Math.max(0, this.opacity);
+
+              // 绘制金色硬币
+              ctx.beginPath();
+              ctx.arc(0, 0, this.size, 0, Math.PI * 2);
+              ctx.fillStyle = '#ffd700';
+              ctx.shadowColor = '#ff5000';
+              ctx.shadowBlur = 10;
+              ctx.fill();
+              ctx.lineWidth = 2;
+              ctx.strokeStyle = '#fff7b2';
+              ctx.stroke();
+
+              // 内部￥符号
+              ctx.fillStyle = '#b37700';
+              ctx.font = 'bold ' + (this.size * 1.1) + 'px sans-serif';
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText('¥', 0, 1);
+
+              ctx.restore();
+            }
+          }
+
+          function spawnCoinRain() {
+            for (let i = 0; i < 35; i++) {
+              coins.push(new Coin());
+            }
+          }
+
+          function animateCoins() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            for (let i = coins.length - 1; i >= 0; i--) {
+              coins[i].update();
+              coins[i].draw();
+              if (coins[i].opacity <= 0 || coins[i].y > canvas.height) {
+                coins.splice(i, 1);
+              }
+            }
+            requestAnimationFrame(animateCoins);
+          }
+          animateCoins();
+
+          // =============== 主逻辑 ===============
           function updateClock() {
             const now = new Date();
             document.getElementById('liveClock').innerText = now.toLocaleTimeString('zh-CN', { hour12: false });
@@ -491,13 +663,13 @@ export async function onRequestGet(context) {
 
           let lastSeenId = ${latestDetails[0] ? (latestDetails[0].id || 0) : 0};
 
-          // 触发中央飘字狂欢效果
+          // 触发中央飘字特效 (显示"新增收入")
           function triggerCashEffect() {
             const box = document.getElementById('cashFloatBox');
             if (!box) return;
             const el = document.createElement('div');
             el.className = 'cash-float-item';
-            el.innerText = '+ ￥8.00';
+            el.innerText = '新增收入 🎉';
             box.appendChild(el);
             setTimeout(() => el.remove(), 1200);
           }
@@ -507,9 +679,9 @@ export async function onRequestGet(context) {
             const toast = document.createElement('div');
             toast.className = 'live-toast';
             toast.innerHTML = \`
-              <div style="font-size: 24px;">💎</div>
+              <div style="font-size: 24px;">💰</div>
               <div>
-                <div style="font-weight: bold; color: #ffd700; font-size: 13px;">实时数据捕获！收益 +8 元</div>
+                <div style="font-weight: bold; color: #ffd700; font-size: 13px;">新增收入进账！</div>
                 <div style="font-size: 12px; color: #e2e8f0; margin-top: 2px;">
                   来自 <strong>\${record.country} \${record.city}</strong> (\${record.ip})
                 </div>
@@ -542,7 +714,7 @@ export async function onRequestGet(context) {
                 if (incomeEl && incomeEl.innerText !== newText) {
                   incomeEl.innerText = newText;
                   
-                  // 夸张的金色冲击特效
+                  // 金色缩放冲击特效
                   incomeEl.classList.remove('gold-pop');
                   void incomeEl.offsetWidth; 
                   incomeEl.classList.add('gold-pop');
@@ -553,7 +725,9 @@ export async function onRequestGet(context) {
                 const newest = data.latest[0];
                 if (lastSeenId && newest.id > lastSeenId) {
                   showToast(newest);
-                  triggerCashEffect(); // 新增收益飘字动画
+                  triggerCashEffect(); // 飘字
+                  spawnCoinRain();     // 撒金币雨
+                  playCoinSound();     // 播放进账音效
 
                   const stream = document.getElementById('feedStream');
                   if (stream) {
@@ -606,6 +780,9 @@ export async function onRequestGet(context) {
 
             } catch (e) {}
           }
+
+          // 首次点击页面解锁浏览器的音频自动播放限制
+          window.addEventListener('click', () => { initAudio(); }, { once: true });
 
           setInterval(pollRealtimeData, 3000);
         </script>
