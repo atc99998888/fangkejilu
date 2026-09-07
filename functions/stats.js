@@ -57,8 +57,8 @@ function cleanAndExtractLocation(rawStr) {
   return cleaned || null;
 }
 
-// 独立的隔离 Fetch 封装，防止 Header 泄露导致第三方重定向到 m.baidu.com
-async function cleanFetch(url, timeout = 2000) {
+// 隔离 Fetch 封装：无任何 Referer/Origin 泄露
+async function cleanFetch(url, timeout = 2500) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
   try {
@@ -67,8 +67,8 @@ async function cleanFetch(url, timeout = 2000) {
       signal: controller.signal,
       referrerPolicy: 'no-referrer',
       headers: { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
       }
     });
     clearTimeout(id);
@@ -80,25 +80,12 @@ async function cleanFetch(url, timeout = 2000) {
 }
 
 // ==========================================
-// 2. 高可用 IP 地理位置查询 API 节点
+// 2. 纯净第三方 IP 解析节点（排除百度源）
 // ==========================================
-
-async function apiBaidu(cleanIp) {
-  const res = await cleanFetch(`https://opendata.baidu.com/api.php?query=${encodeURIComponent(cleanIp)}&resource_id=6006&oe=utf8`);
-  if (!res.ok) throw new Error('Baidu HTTP error');
-  const data = await res.json();
-  const loc = data?.data?.[0]?.location;
-  const parsed = cleanAndExtractLocation(loc);
-  if (parsed) {
-    const item = { country: 'CN', city: parsed };
-    return { ...item, score: evaluatePrecision(item) };
-  }
-  throw new Error('Baidu parse failed');
-}
 
 async function apiIpWhoIsIo(cleanIp) {
   const res = await cleanFetch(`https://ipwho.is/${cleanIp}?lang=zh-CN`);
-  if (!res.ok) throw new Error('IpWhoIsIo HTTP error');
+  if (!res.ok) throw new Error('IpWhoIsIo error');
   const data = await res.json();
   if (data && data.success) {
     const region = data.region || '';
@@ -109,12 +96,12 @@ async function apiIpWhoIsIo(cleanIp) {
       return { ...item, score: evaluatePrecision(item) };
     }
   }
-  throw new Error('IpWhoIsIo parse failed');
+  throw new Error('IpWhoIsIo failed');
 }
 
 async function apiIpSb(cleanIp) {
   const res = await cleanFetch(`https://api.ip.sb/geoip/${cleanIp}`);
-  if (!res.ok) throw new Error('IP.SB HTTP error');
+  if (!res.ok) throw new Error('IP.SB error');
   const data = await res.json();
   const region = data.region || '';
   const city = data.city || '';
@@ -123,12 +110,12 @@ async function apiIpSb(cleanIp) {
     const item = { country: data.country_code || 'CN', city: parsed };
     return { ...item, score: evaluatePrecision(item) };
   }
-  throw new Error('IP.SB parse failed');
+  throw new Error('IP.SB failed');
 }
 
 async function apiIpWhoisApp(cleanIp) {
   const res = await cleanFetch(`https://ipwhois.app/json/${cleanIp}?lang=zh-CN`);
-  if (!res.ok) throw new Error('IpWhoisApp HTTP error');
+  if (!res.ok) throw new Error('IpWhoisApp error');
   const data = await res.json();
   if (data && data.success) {
     const region = data.region || '';
@@ -139,12 +126,12 @@ async function apiIpWhoisApp(cleanIp) {
       return { ...item, score: evaluatePrecision(item) };
     }
   }
-  throw new Error('IpWhoisApp parse failed');
+  throw new Error('IpWhoisApp failed');
 }
 
 async function apiIpApi(cleanIp) {
   const res = await cleanFetch(`http://ip-api.com/json/${cleanIp}?fields=status,countryCode,regionName,city&lang=zh-CN`);
-  if (!res.ok) throw new Error('IpApi HTTP error');
+  if (!res.ok) throw new Error('IpApi error');
   const data = await res.json();
   if (data && data.status === 'success') {
     const region = data.regionName || '';
@@ -155,7 +142,7 @@ async function apiIpApi(cleanIp) {
       return { ...item, score: evaluatePrecision(item) };
     }
   }
-  throw new Error('IpApi parse failed');
+  throw new Error('IpApi failed');
 }
 
 const globalIpCache = new Map();
@@ -175,7 +162,6 @@ async function resolveBestGlobalGeo(ip) {
   }
 
   const promises = [
-    apiBaidu(cleanIp),
     apiIpWhoIsIo(cleanIp),
     apiIpSb(cleanIp),
     apiIpWhoisApp(cleanIp),
@@ -209,7 +195,7 @@ async function resolveBestGlobalGeo(ip) {
   return fallback;
 }
 
-// Batch处理辅助，防止瞬时并发冲垮 API 限流
+// 批处理防止触发频繁 API 限制
 async function processBatch(rows, batchSize = 5) {
   if (!rows || rows.length === 0) return [];
   const results = [];
@@ -250,11 +236,19 @@ export async function onRequestGet(context) {
     return new Response("数据库未绑定：请在 Cloudflare Pages 设置中绑定名为 DB 的 D1 数据库", { status: 500 });
   }
 
-  // 严格域名解析逻辑，排除 m.baidu.com 干扰
-  let requestDomain = request.headers.get("x-forwarded-host") || request.headers.get("host") || url.hostname;
-  requestDomain = requestDomain.split(':')[0].toLowerCase().trim();
-  if (requestDomain.includes('baidu.com')) {
-    requestDomain = url.hostname; // 如果被污染为百度，强制使用当前实际请求 URL 域名
+  // ----------------------------------------------------
+  // 严格安全的域名提取与防污染逻辑
+  // ----------------------------------------------------
+  let rawHost = request.headers.get("x-forwarded-host") || request.headers.get("host");
+  if (!rawHost) {
+    rawHost = url.hostname;
+  }
+
+  let requestDomain = rawHost.split(':')[0].toLowerCase().trim();
+
+  // 如果提取到了第三方域名或非合法域名，强制还原为当前请求 URL 的真实 Hostname
+  if (requestDomain.includes('baidu.com') || requestDomain.includes('ip-api.com') || !requestDomain) {
+    requestDomain = url.hostname;
   }
 
   try {
@@ -272,7 +266,6 @@ export async function onRequestGet(context) {
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
-    // 采用批次处理，避免接口并发被限速
     const todayDetailsRaw = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
       FROM visits 
@@ -594,7 +587,7 @@ export async function onRequestGet(context) {
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问地区排行榜 (点击展开明细)
-              <span class="sub-tip">🌐 5 源并发分批高精度解析</span>
+              <span class="sub-tip">🌐 纯净高精度并发解析</span>
             </h2>
             <div class="table-responsive">
               <table>
