@@ -1,23 +1,29 @@
 export async function onRequestGet(context) {
   const { request, env } = context;
 
-  // 访问安全密钥（可更改，需与 URL 中 ?key= 保持一致）
+  // 1. 密钥校验
   const SECRET_KEY = "123456"; 
   const url = new URL(request.url);
 
   if (url.searchParams.get("key") !== SECRET_KEY) {
-    return new Response("未授权访问：请在 URL 末尾加上 ?key=你的密码", { status: 403 });
+    return new Response("未授权访问：请在 URL 末尾加上 ?key=你的密码", { 
+      status: 403,
+      headers: { "Content-Type": "text/html; charset=utf-8" }
+    });
   }
 
   if (!env || !env.DB) {
-    return new Response("数据库未绑定：请在 Cloudflare Pages 设置中绑定名为 DB 的 D1 数据库", { status: 500 });
+    return new Response("数据库未绑定：请在 Cloudflare Pages 设置中绑定名为 DB 的 D1 数据库", { 
+      status: 500,
+      headers: { "Content-Type": "text/html; charset=utf-8" }
+    });
   }
 
   try {
     const bjDateExpr = "DATE(DATETIME(IFNULL(visit_time, CURRENT_TIMESTAMP), '+8 hours'))";
     const todayDateExpr = "DATE('now', '+8 hours')";
 
-    // 【JSON 轮询 API】：前端大屏每 3 秒发起一次请求获取最新动态
+    // 【接口】JSON 轮询 API
     if (url.searchParams.get("action") === "realtime") {
       const latestRes = await env.DB.prepare(`
         SELECT id, ip, country, city, visit_time 
@@ -66,7 +72,7 @@ export async function onRequestGet(context) {
       });
     }
 
-    // 【HTML 渲染】：中控大屏主界面
+    // 【页面】HTML 渲染
     const todayRes = await env.DB.prepare(`
       SELECT COUNT(*) as count FROM visits 
       WHERE ${bjDateExpr} = ${todayDateExpr}
@@ -131,8 +137,7 @@ export async function onRequestGet(context) {
       }).join('');
     };
 
-    const html = `
-      <!DOCTYPE html>
+    const html = `<!DOCTYPE html>
       <html lang="zh-CN">
       <head>
         <meta charset="utf-8">
@@ -149,7 +154,6 @@ export async function onRequestGet(context) {
             overflow-x: hidden;
           }
 
-          /* 全屏金币雨 Canvas */
           #coinCanvas {
             position: fixed;
             top: 0;
@@ -187,7 +191,6 @@ export async function onRequestGet(context) {
           .header-right { display: flex; align-items: center; gap: 20px; }
           .clock-box { font-family: monospace; font-size: 16px; color: #00f0ff; text-shadow: 0 0 8px rgba(0,240,255,0.5); }
           
-          /* 页面底部静态常驻控制栏（嵌入式布局，跟随页面滚动） */
           .bottom-sound-bar {
             width: 100%;
             padding: 30px 0 40px 0;
@@ -198,8 +201,8 @@ export async function onRequestGet(context) {
           }
           .sound-toggle {
             background: rgba(13, 20, 32, 0.9);
-            border: 1px solid rgba(255, 215, 0, 0.5);
-            color: #ffd700;
+            border: 1px solid rgba(0, 160, 233, 0.6);
+            color: #00a0e9;
             padding: 10px 26px;
             border-radius: 30px;
             font-size: 14px;
@@ -213,9 +216,9 @@ export async function onRequestGet(context) {
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
           }
           .sound-toggle:hover {
-            border-color: #ffd700;
-            background: rgba(255, 215, 0, 0.15);
-            box-shadow: 0 0 20px rgba(255, 215, 0, 0.4);
+            border-color: #00a0e9;
+            background: rgba(0, 160, 233, 0.15);
+            box-shadow: 0 0 20px rgba(0, 160, 233, 0.4);
             transform: translateY(-2px);
           }
           .sound-toggle.muted {
@@ -259,7 +262,6 @@ export async function onRequestGet(context) {
             letter-spacing: 0.5px;
           }
 
-          /* 顶部统计双卡片 */
           .stats-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -297,7 +299,6 @@ export async function onRequestGet(context) {
             text-shadow: 0 0 25px rgba(255, 215, 0, 0.6);
           }
 
-          /* 弹性浮动动画 */
           .gold-pop {
             animation: goldShockwave 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards !important;
           }
@@ -307,7 +308,6 @@ export async function onRequestGet(context) {
             100% { transform: scale(1); filter: drop-shadow(0 0 0px #ffd700); }
           }
 
-          /* 屏幕中央漂浮收益特效 */
           .cash-float-container {
             position: fixed;
             top: 40%;
@@ -334,7 +334,7 @@ export async function onRequestGet(context) {
 
           .feed-stream {
             display: flex;
-            flex-direction: column;
+            flex-direction: flex-direction: column;
             gap: 12px;
             max-height: 480px;
             overflow-y: auto;
@@ -439,8 +439,8 @@ export async function onRequestGet(context) {
           .live-toast {
             pointer-events: auto;
             background: rgba(10, 16, 26, 0.95);
-            border: 1px solid #ffd700;
-            box-shadow: 0 0 20px rgba(255, 215, 0, 0.3);
+            border: 1px solid #00a0e9;
+            box-shadow: 0 0 20px rgba(0, 160, 233, 0.4);
             color: #fff;
             padding: 12px 20px;
             border-radius: 8px;
@@ -483,7 +483,6 @@ export async function onRequestGet(context) {
 
         <div class="grid-container">
           <div class="card-panel">
-            
             <div class="stats-grid">
               <div class="stat-hero">
                 <div class="label">GLOBAL VISITS / 全球实时并发访客总量</div>
@@ -535,32 +534,45 @@ export async function onRequestGet(context) {
           </div>
         </div>
 
-        <!-- 页面底部静态控制按钮 (自然嵌入布局，跟随页面滚动) -->
         <div class="bottom-sound-bar">
           <button class="sound-toggle" id="soundBtn" onclick="toggleSound()">
-            <span id="soundIcon">🔊</span> <span id="soundText">进账提示音：已开启</span>
+            <span id="soundIcon">🔊</span> <span id="soundText">支付宝提示音：已开启</span>
           </button>
         </div>
 
         <script>
-          // =============== 音效控制 (2.2秒长延音金币到账全效音，解决浏览器Autoplay拦截) ===============
           let soundEnabled = true;
           let audioCtx = null;
 
+          // 移动端兼容的音频初始化与解锁
           function initAudio() {
             if (!audioCtx) {
               const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-              if (AudioContextClass) {
-                audioCtx = new AudioContextClass();
-              }
+              if (AudioContextClass) audioCtx = new AudioContextClass();
             }
             if (audioCtx && audioCtx.state === 'suspended') {
               audioCtx.resume();
             }
           }
 
+          // 手势解密，防止移动端静音拦截
+          const unlockAudio = () => {
+            initAudio();
+            if (audioCtx) {
+              const buffer = audioCtx.createBuffer(1, 1, 22050);
+              const source = audioCtx.createBufferSource();
+              source.buffer = buffer;
+              source.connect(audioCtx.destination);
+              source.start(0);
+            }
+          };
+
+          ['click', 'touchstart', 'touchend', 'pointerdown'].forEach(evt => {
+            window.addEventListener(evt, unlockAudio, { once: true });
+          });
+
           function toggleSound() {
-            initAudio(); // 每次点击时显式激活音频上下文
+            initAudio();
             soundEnabled = !soundEnabled;
             const btn = document.getElementById('soundBtn');
             const icon = document.getElementById('soundIcon');
@@ -568,16 +580,16 @@ export async function onRequestGet(context) {
             if (soundEnabled) {
               btn.classList.remove('muted');
               icon.innerText = '🔊';
-              text.innerText = '进账提示音：已开启';
+              text.innerText = '支付宝提示音：已开启';
               playCoinSound();
             } else {
               btn.classList.add('muted');
               icon.innerText = '🔇';
-              text.innerText = '进账提示音：已关闭';
+              text.innerText = '支付宝提示音：已关闭';
             }
           }
 
-          // 播放 2.2 秒长延音清脆到账音效
+          // 【核心替换】：支付宝式经典清脆“叮咚”音效
           function playCoinSound() {
             if (!soundEnabled) return;
             try {
@@ -586,48 +598,39 @@ export async function onRequestGet(context) {
               
               const now = audioCtx.currentTime;
 
-              // 音阶 1: 金币落地前奏 (880Hz)
+              // 第一声：“叮” (E6 约 1318.51 Hz)
               const osc1 = audioCtx.createOscillator();
               const gain1 = audioCtx.createGain();
               osc1.type = 'sine';
-              osc1.frequency.setValueAtTime(880, now);
-              gain1.gain.setValueAtTime(0.3, now);
-              gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+              osc1.frequency.setValueAtTime(1318.51, now);
+
+              gain1.gain.setValueAtTime(0.35, now);
+              gain1.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+
               osc1.connect(gain1);
               gain1.connect(audioCtx.destination);
-              osc1.start(now);
-              osc1.stop(now + 0.15);
 
-              // 音阶 2: 金币撞击清脆音 (1320Hz)
+              osc1.start(now);
+              osc1.stop(now + 0.35);
+
+              // 第二声：“咚” (G#6 约 1567.98 Hz，延迟 0.12 秒触发)
               const osc2 = audioCtx.createOscillator();
               const gain2 = audioCtx.createGain();
               osc2.type = 'sine';
-              osc2.frequency.setValueAtTime(1320, now + 0.08);
-              gain2.gain.setValueAtTime(0.4, now + 0.08);
-              gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+              osc2.frequency.setValueAtTime(1567.98, now + 0.12);
+
+              gain2.gain.setValueAtTime(0.45, now + 0.12);
+              gain2.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
+
               osc2.connect(gain2);
               gain2.connect(audioCtx.destination);
-              osc2.start(now + 0.08);
-              osc2.stop(now + 0.3);
 
-              // 音阶 3: 高频金币回响 + 2.2 秒缓慢余音衰减 (1760Hz)
-              const osc3 = audioCtx.createOscillator();
-              const gain3 = audioCtx.createGain();
-              osc3.type = 'sine';
-              osc3.frequency.setValueAtTime(1760, now + 0.15);
-              gain3.gain.setValueAtTime(0.45, now + 0.15);
-              gain3.gain.exponentialRampToValueAtTime(0.0001, now + 2.2);
-              osc3.connect(gain3);
-              gain3.connect(audioCtx.destination);
-              osc3.start(now + 0.15);
-              osc3.stop(now + 2.2);
+              osc2.start(now + 0.12);
+              osc2.stop(now + 0.7);
 
-            } catch(e) {
-              console.error("Audio error:", e);
-            }
+            } catch (e) {}
           }
 
-          // =============== 撒金币雨特效 (Canvas 粒子系统) ===============
           const canvas = document.getElementById('coinCanvas');
           const ctx = canvas.getContext('2d');
           let coins = [];
@@ -649,7 +652,6 @@ export async function onRequestGet(context) {
               this.rotation = Math.random() * 360;
               this.rotSpeed = Math.random() * 10 + 5;
               this.scaleY = 1;
-              this.scaleSpeed = Math.random() * 0.1 + 0.05;
               this.opacity = 1;
             }
             update() {
@@ -657,9 +659,7 @@ export async function onRequestGet(context) {
               this.x += this.speedX;
               this.rotation += this.rotSpeed;
               this.scaleY = Math.sin(this.rotation * Math.PI / 180);
-              if (this.y > canvas.height - 50) {
-                this.opacity -= 0.03;
-              }
+              if (this.y > canvas.height - 50) this.opacity -= 0.03;
             }
             draw() {
               ctx.save();
@@ -667,7 +667,6 @@ export async function onRequestGet(context) {
               ctx.scale(1, this.scaleY);
               ctx.globalAlpha = Math.max(0, this.opacity);
 
-              // 绘制金色硬币
               ctx.beginPath();
               ctx.arc(0, 0, this.size, 0, Math.PI * 2);
               ctx.fillStyle = '#ffd700';
@@ -678,7 +677,6 @@ export async function onRequestGet(context) {
               ctx.strokeStyle = '#fff7b2';
               ctx.stroke();
 
-              // 内部￥符号
               ctx.fillStyle = '#b37700';
               ctx.font = 'bold ' + (this.size * 1.1) + 'px sans-serif';
               ctx.textAlign = 'center';
@@ -690,9 +688,7 @@ export async function onRequestGet(context) {
           }
 
           function spawnCoinRain() {
-            for (let i = 0; i < 35; i++) {
-              coins.push(new Coin());
-            }
+            for (let i = 0; i < 35; i++) coins.push(new Coin());
           }
 
           function animateCoins() {
@@ -700,15 +696,12 @@ export async function onRequestGet(context) {
             for (let i = coins.length - 1; i >= 0; i--) {
               coins[i].update();
               coins[i].draw();
-              if (coins[i].opacity <= 0 || coins[i].y > canvas.height) {
-                coins.splice(i, 1);
-              }
+              if (coins[i].opacity <= 0 || coins[i].y > canvas.height) coins.splice(i, 1);
             }
             requestAnimationFrame(animateCoins);
           }
           animateCoins();
 
-          // =============== 主逻辑 ===============
           function updateClock() {
             const now = new Date();
             document.getElementById('liveClock').innerText = now.toLocaleTimeString('zh-CN', { hour12: false });
@@ -718,13 +711,12 @@ export async function onRequestGet(context) {
 
           let lastSeenId = ${latestDetails[0] ? (latestDetails[0].id || 0) : 0};
 
-          // 触发中央漂浮收益特效
           function triggerCashEffect() {
             const box = document.getElementById('cashFloatBox');
             if (!box) return;
             const el = document.createElement('div');
             el.className = 'cash-float-item';
-            el.innerText = '新增收入 🎉';
+            el.innerText = '支付宝到账 8 元 💰';
             box.appendChild(el);
             setTimeout(() => el.remove(), 1200);
           }
@@ -734,9 +726,9 @@ export async function onRequestGet(context) {
             const toast = document.createElement('div');
             toast.className = 'live-toast';
             toast.innerHTML = \`
-              <div style="font-size: 24px;">💰</div>
+              <div style="font-size: 24px;">💙</div>
               <div>
-                <div style="font-weight: bold; color: #ffd700; font-size: 13px;">新增收入进账！</div>
+                <div style="font-weight: bold; color: #00a0e9; font-size: 13px;">支付宝到账 8 元！</div>
                 <div style="font-size: 12px; color: #e2e8f0; margin-top: 2px;">
                   来自 <strong>\${record.country} \${record.city}</strong> (\${record.ip})
                 </div>
@@ -758,9 +750,7 @@ export async function onRequestGet(context) {
 
               if (data.todayCount !== undefined) {
                 const numEl = document.getElementById('todayHeroNum');
-                if (numEl && numEl.innerText != data.todayCount) {
-                  numEl.innerText = data.todayCount;
-                }
+                if (numEl && numEl.innerText != data.todayCount) numEl.innerText = data.todayCount;
               }
 
               if (data.todayIncome !== undefined) {
@@ -768,8 +758,6 @@ export async function onRequestGet(context) {
                 const newText = '¥ ' + data.todayIncome;
                 if (incomeEl && incomeEl.innerText !== newText) {
                   incomeEl.innerText = newText;
-                  
-                  // 金色缩放冲击特效
                   incomeEl.classList.remove('gold-pop');
                   void incomeEl.offsetWidth; 
                   incomeEl.classList.add('gold-pop');
@@ -780,9 +768,9 @@ export async function onRequestGet(context) {
                 const newest = data.latest[0];
                 if (lastSeenId && newest.id > lastSeenId) {
                   showToast(newest);
-                  triggerCashEffect(); // 飘字
-                  spawnCoinRain();     // 撒金币雨
-                  playCoinSound();     // 播放 2.2 秒到账音效
+                  triggerCashEffect();
+                  spawnCoinRain();
+                  playCoinSound();
 
                   const stream = document.getElementById('feedStream');
                   if (stream) {
@@ -803,10 +791,7 @@ export async function onRequestGet(context) {
                       <div class="feed-badge">已进入</div>
                     \`;
                     stream.insertBefore(newItem, stream.firstChild);
-
-                    if (stream.children.length > 30) {
-                      stream.removeChild(stream.lastChild);
-                    }
+                    if (stream.children.length > 30) stream.removeChild(stream.lastChild);
                   }
                   lastSeenId = newest.id;
                 }
@@ -836,20 +821,22 @@ export async function onRequestGet(context) {
             } catch (e) {}
           }
 
-          // 用户在页面上进行任意交互时自动解锁音频播放权限
-          ['click', 'touchstart', 'keydown'].forEach(evt => {
-            window.addEventListener(evt, () => { initAudio(); }, { once: true });
-          });
-
           setInterval(pollRealtimeData, 3000);
         </script>
       </body>
-      </html>
-    `;
+      </html>`;
 
-    return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    return new Response(html, { 
+      headers: { 
+        "Content-Type": "text/html; charset=utf-8" 
+      } 
+    });
+
   } catch (error) {
-    return new Response(`大屏加载异常：${error.message}`, { status: 500 });
+    return new Response(`大屏加载异常：${error.message}`, { 
+      status: 500,
+      headers: { "Content-Type": "text/html; charset=utf-8" }
+    });
   }
 }
 
@@ -880,7 +867,6 @@ function translateCountry(code) {
 
 function translateCity(city) {
   if (!city || city === 'Unknown') return '未知城市';
-
   const cityMap = {
     'beijing': '北京', 'shanghai': '上海', 'tianjin': '天津', 'chongqing': '重庆',
     'hong kong': '香港', 'macau': '澳门', 'taipei': '台北', 'kaohsiung': '高雄',
