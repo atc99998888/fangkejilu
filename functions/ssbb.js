@@ -504,15 +504,150 @@ function translateCountry(code) {
 
 function translateCity(city) {
   if (!city || city === 'Unknown') return '未知城市';
+
+  // 全国各省市拼音 -> 中文对照字典
   const cityMap = {
-    'Beijing': '北京', 'Shanghai': '上海', 'Tianjin': '天津', 'Chongqing': '重庆',
-    'Hong Kong': '香港', 'Macau': '澳门', 'Taipei': '台北', 'Kaohsiung': '高雄',
-    'Guangzhou': '广州', 'Shenzhen': '深圳', 'Zhuhai': '珠海', 'Shantou': '汕头',
-    'Foshan': '佛山', 'Dongguan': '东莞', 'Zhongshan': '中山', 'Hangzhou': '杭州',
-    'Ningbo': '宁波', 'Wenzhou': '温州', 'Nanjing': '南京', 'Suzhou': '苏州',
-    'Wuxi': '无锡', 'Chengdu': '成都', 'Wuhan': '武汉', 'Changsha': '长沙',
-    'Zhengzhou': '郑州', 'Qingdao': '青岛', 'Jinan': '济南', 'Xi\'an': '西安',
-    'Xian': '西安', 'Fuzhou': '福州', 'Xiamen': '厦门', 'Hefei': '合肥'
+    // 直辖市 / 特别行政区
+    'beijing': '北京', 'shanghai': '上海', 'tianjin': '天津', 'chongqing': '重庆',
+    'hong kong': '香港', 'macau': '澳门', 'taipei': '台北', 'kaohsiung': '高雄',
+
+    // 广东
+    'guangzhou': '广州', 'shenzhen': '深圳', 'zhuhai': '珠海', 'shantou': '汕头',
+    'foshan': '佛山', 'shaoguan': '韶关', 'heyuan': '河源', 'meizhou': '梅州',
+    'huizhou': '惠州', 'shanwei': '汕尾', 'dongguan': '东莞', 'zhongshan': '中山',
+    'jiangmen': '江门', 'yangjiang': '阳江', 'zhanjiang': '湛江', 'maoming': '茂名',
+    'zhaoqing': '肇庆', 'qingyuan': '清远', 'chaozhou': '潮州', 'jieyang': '揭阳', 'yunfu': '云浮',
+
+    // 浙江
+    'hangzhou': '杭州', 'ningbo': '宁波', 'wenzhou': '温州', 'jiaxing': '嘉兴',
+    'huzhou': '湖州', 'shaoxing': '绍兴', 'jinhua': '金华', 'quzhou': '衢州',
+    'zhoushan': '舟山', 'taizhou': '台州', 'lishui': '丽水',
+
+    // 江苏
+    'nanjing': '南京', 'wuxi': '无锡', 'xuzhou': '徐州', 'changzhou': '常州',
+    'suzhou': '苏州', 'nantong': '南通', 'lianyungang': '连云港', 'huaian': '淮安',
+    'yancheng': '盐城', 'yangzhou': '扬州', 'zhenjiang': '镇江', 'taizhou2': '泰州', 'suqian': '宿迁',
+
+    // 山东
+    'jinan': '济南', 'qingdao': '青岛', 'zibo': '淄博', 'zaozhuang': '枣庄',
+    'dongying': '东营', 'yantai': '烟台', 'weifang': '潍坊', 'jining': '济宁',
+    'taian': '泰安', 'weihai': '威海', 'rizhao': '日照', 'linyi': '临沂',
+    'dezhou': '德州', 'liaocheng': '聊城', 'binzhou': '滨州', 'heze': '菏泽',
+
+    // 福建
+    'fuzhou': '福州', 'xiamen': '厦门', 'putian': '莆田', 'sanming': '三明',
+    'quanzhou': '泉州', 'zhangzhou': '漳州', 'nanping': '南平', 'longyan': '龙岩', 'ningde': '宁德',
+
+    // 湖北
+    'wuhan': '武汉', 'huangshi': '黄石', 'shiyan': '十堰', 'yichang': '宜昌',
+    'xiangyang': '襄阳', 'ezhou': '鄂州', 'jingmen': '荆门', 'xiaogan': '孝感',
+    'jingzhou': '荆州', 'huanggang': '黄冈', 'xianning': '咸宁', 'suizhou': '随州',
+    'enshi': '恩施', 'xiantian': '仙桃', 'qianjiang': '潜江', 'tianmen': '天门', 'shennongjia': '神农架',
+
+    // 湖南
+    'changsha': '长沙', 'zhuzhou': '株洲', 'xiangtan': '湘潭', 'hengyang': '衡阳',
+    'shaoyang': '邵阳', 'yueyang': '岳阳', 'changde': '常德', 'zhangjiajie': '张家界',
+    'yiyang': '益阳', 'chenzhou': '郴州', 'yongzhou': '永州', 'huaihua': '怀化',
+    'loudi': '娄底', 'xiangxi': '湘西',
+
+    // 河南
+    'zhengzhou': '郑州', 'kaifeng': '开封', 'luoyang': '洛阳', 'pingdingshan': '平顶山',
+    'anyang': '安阳', 'hebi': '鹤壁', 'xinxiang': '新乡', 'jiaozuo': '焦作',
+    'puyang': '濮阳', 'xuchang': '许昌', 'luohe': '漯河', 'sanmenxia': '三门峡',
+    'nanyang': '南阳', 'shangqiu': '商丘', 'xinyang': '信阳', 'zhoukou': '周口',
+    'zhumadian': '驻马店', 'jiyuan': '济源',
+
+    // 四川
+    'chengdu': '成都', 'zigong': '自贡', 'panzhihua': '攀枝花', 'luzhou': '泸州',
+    'deyang': '德阳', 'mianyang': '绵阳', 'guangyuan': '广元', 'suining': '遂宁',
+    'neijiang': '内江', 'leshan': '乐山', 'nanchong': '南充', 'meishan': '眉山',
+    'yibin': '宜宾', 'guangan': '广安', 'dazhou': '达州', 'yaan': '雅安',
+    'bazhong': '巴中', 'ziyang': '资阳', 'aba': '阿坝', 'ganzi': '甘孜', 'liangshan': '凉山',
+
+    // 陕西
+    'xian': "西安", "xi'an": "西安", 'tongchuan': '铜川', 'baoji': '宝鸡',
+    'xianyang': '咸阳', 'weinan': '渭南', 'yanan': '延安', 'hanzhong': '汉中',
+    'yulin': '榆林', 'ankang': '安康', 'shangluo': '商洛',
+
+    // 河北
+    'shijiazhuang': '石家庄', 'tangshan': '唐山', 'qinhuangdao': '秦皇岛',
+    'handan': '邯郸', 'xingtai': '邢台', 'baoding': '保定', 'zhangjiakou': '张家口',
+    'chengde': '承德', 'cangzhou': '沧州', 'langfang': '廊坊', 'hengshui': '衡水',
+
+    // 山西
+    'taiwo': '太原', 'taiyuan': '太原', 'datong': '大同', 'yangquan': '阳泉',
+    'changzhi': '长治', 'jincheng': '晋城', 'shuozhou': '朔州', 'jinzhong': '晋中',
+    'yuncheng': '运城', 'xinzhou': '忻州', 'linfen': '临汾', 'lvliang': '吕梁',
+
+    // 辽宁
+    'shenyang': '沈阳', 'dalian': '大连', 'anshan': '鞍山', 'fushun': '抚顺',
+    'benxi': '本溪', 'dandong': '丹东', 'jinzhou': '锦州', 'yingkou': '营口',
+    'fuxin': '阜新', 'liaoyang': '辽阳', 'panjin': '盘锦', 'tieling': '铁岭',
+    'chaoyang': '朝阳', 'huludao': '葫芦岛',
+
+    // 吉林
+    'changchun': '长春', 'jilin': '吉林', 'siping': '四平', 'liaoyuan': '辽源',
+    'tonghua': '通化', 'baishan': '白山', 'songyuan': '松原', 'baicheng': '白城', 'yanbian': '延边',
+
+    // 黑龙江
+    'harbin': '哈尔滨', 'qiqihar': '齐齐哈尔', 'jixi': '鸡西', 'hegang': '鹤岗',
+    'shuangyashan': '双鸭山', 'daqing': '大庆', 'yichun': '伊春', 'jiamusi': '佳木斯',
+    'qitaihe': '七台河', 'mudanjiang': '牡丹江', 'heihe': '黑河', 'suihua': '绥化', 'daxinganling': '大兴安岭',
+
+    // 安徽
+    'hefei': '合肥', 'wuhu': '芜湖', 'bengbu': '蚌埠', 'huainan': '淮南',
+    'maanshan': '马鞍山', 'huaibei': '淮北', 'tongling': '铜陵', 'anqing': '安庆',
+    'huangshan': '黄山', 'chuzhou': '滁州', 'fuyang': '阜阳', 'suzhou2': '宿州',
+    'luan': '六安', 'bozhou': '毫州', 'chizhou': '池州', 'xuancheng': '宣城',
+
+    // 江西
+    'nanchang': '南昌', 'jingdezhen': '景德镇', 'pingxiang': '萍乡', 'jiujiang': '九江',
+    'xinyu': '新余', 'yingtan': '鹰潭', 'ganzhou': '赣州', 'jian': '吉安',
+    'yichun2': '宜春', 'fuzhou2': '抚州', 'shangrao': '上饶',
+
+    // 广西
+    'nanning': '南宁', 'liuzhou': '柳州', 'guilin': '桂林', 'wuzhou': '梧州',
+    'beihai': '北海', 'fangchenggang': '防城港', 'qinzhou': '钦州', 'guigang': '贵港',
+    'yulin2': '玉林', 'baise': '百色', 'hezhou': '贺州', 'hechi': '河池', 'laibin': '来宾', 'chongzuo': '崇左',
+
+    // 海南
+    'haikou': '海口', 'sanya': '三亚', 'sansha': '三沙', 'danzhou': '儋州',
+
+    // 贵州
+    'guiyang': '贵阳', 'liupanshui': '六盘水', 'zunyi': '遵义', 'anshun': '安顺',
+    'bijie': '毕节', 'tongren': '铜仁', 'qianxinan': '黔西南', 'qiandongnan': '黔东南', 'qiannan': '黔南',
+
+    // 云南
+    'kunming': '昆明', 'qujing': '曲靖', 'yuxi': '玉溪', 'baoshan': '保山',
+    'zhaotong': '昭通', 'lijiang': '丽江', 'puer': '普洱', 'lincang': '临沧',
+    'chuxiong': '楚雄', 'honghe': '红河', 'wenshan': '文山', 'xishuangbanna': '西双版纳',
+    'dali': '大理', 'dehong': '德宏', 'nujiang': '怒江', 'diqing': '迪庆',
+
+    // 西藏
+    'lhasa': '拉萨', 'shigatse': '日喀则', 'qamdo': '昌 official', 'nyingchi': '林芝',
+    'shannan': '山南', 'nagqu': '那曲', 'ngari': '阿里',
+
+    // 甘肃
+    'lanzhou': '兰州', 'jiayuguan': '嘉峪关', 'jinchang': '金昌', 'baiyin': '白银',
+    'tianshui': '天水', 'wuwei': '武威', 'zhangye': '张掖', 'pingliang': '平凉',
+    'jiuquan': '酒泉', 'qingyang': '庆阳', 'dingxi': '定西', 'longnan': '陇南',
+    'linxia': '临夏', 'gannan': '甘南',
+
+    // 青海
+    'xining': '西宁', 'haidong': '海东', 'haibei': '海北', 'huangnan': '黄南',
+    'hainan2': '海南州', 'golog': '果洛', 'yushu': '玉树', 'haixi': '海西',
+
+    // 宁夏
+    'yinchuan': '银川', 'shizuishan': '石嘴山', 'wuzhong': '吴忠', 'guyuan': '固原', 'zhongwei': '中卫',
+
+    // 新疆
+    'urumqi': '乌鲁木齐', 'karamay': '克拉玛依', 'turpan': '吐鲁番', 'hami': '哈密',
+    'changji': '昌吉', 'bortala': '博尔塔拉', 'bayingolin': '巴音郭楞', 'aksus': '阿克苏',
+    'aksu': '阿克苏', 'kizilsu': '克孜勒苏', 'kashgar': '喀什', 'hotan': '和田',
+    'ili': '伊犁', 'tacheng': '塔城', 'altay': '阿勒泰', 'shihezi': '石河子'
   };
-  return cityMap[city] || city;
+
+  // 标准化去空格全小写匹配，确保格式兼容
+  const key = String(city).toLowerCase().trim().replace(/-/g, '').replace(/\s+/g, '');
+  return cityMap[key] || cityMap[String(city).toLowerCase().trim()] || city;
 }
