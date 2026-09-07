@@ -72,7 +72,7 @@ export async function onRequestGet(context) {
       WHERE ${bjDateExpr} = ${todayDateExpr}
     `).first();
     const todayVisits = todayRes?.count || 0;
-    const todayIncome = todayVisits * 8; // 预估收入
+    const todayIncome = todayVisits * 8;
 
     const latestDetailsRes = await env.DB.prepare(`
       SELECT id, ip, country, city, visit_time 
@@ -137,13 +137,13 @@ export async function onRequestGet(context) {
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>直播间中控台 - 今日流量实时大屏</title>
+        <title>全球直播大数据中控台</title>
         <style>
           * { box-sizing: border-box; }
           body {
             margin: 0;
             padding: 0;
-            background-color: #0b0e14;
+            background-color: #06090e;
             color: #ffffff;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             overflow-x: hidden;
@@ -153,38 +153,40 @@ export async function onRequestGet(context) {
             justify-content: space-between;
             align-items: center;
             padding: 15px 30px;
-            background: linear-gradient(180deg, rgba(20, 26, 40, 0.9) 0%, rgba(11, 14, 20, 0.9) 100%);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            background: linear-gradient(180deg, rgba(15, 23, 42, 0.95) 0%, rgba(6, 9, 14, 0.95) 100%);
+            border-bottom: 1px solid rgba(0, 240, 255, 0.2);
             backdrop-filter: blur(10px);
           }
           .title-area { display: flex; align-items: center; gap: 12px; }
           .live-tag {
-            background: #ff0055;
+            background: linear-gradient(90deg, #ff0055, #ff5000);
             color: #fff;
-            font-size: 12px;
-            font-weight: bold;
-            padding: 3px 8px;
-            border-radius: 4px;
-            letter-spacing: 1px;
+            font-size: 11px;
+            font-weight: 800;
+            padding: 4px 10px;
+            border-radius: 20px;
+            letter-spacing: 1.5px;
+            box-shadow: 0 0 12px rgba(255, 0, 85, 0.6);
             animation: pulse 1.5s infinite;
           }
-          @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
-          .title-area h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: 1px; }
-          .clock-box { font-family: monospace; font-size: 16px; color: #00f0ff; }
+          @keyframes pulse { 0% { opacity: 0.7; } 50% { opacity: 1; } 100% { opacity: 0.7; } }
+          .title-area h1 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: 1px; background: linear-gradient(90deg, #fff, #00f0ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+          .clock-box { font-family: monospace; font-size: 16px; color: #00f0ff; text-shadow: 0 0 8px rgba(0,240,255,0.5); }
+          
           .grid-container {
             display: grid;
-            grid-template-columns: 2fr 1fr;
+            grid-template-columns: 2.2fr 1fr;
             gap: 20px;
             padding: 20px;
-            max-width: 1400px;
+            max-width: 1500px;
             margin: 0 auto;
           }
           .card-panel {
-            background: rgba(22, 28, 41, 0.7);
-            border: 1px solid rgba(0, 240, 255, 0.2);
-            border-radius: 12px;
+            background: rgba(13, 20, 32, 0.75);
+            border: 1px solid rgba(0, 240, 255, 0.15);
+            border-radius: 14px;
             padding: 20px;
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            box-shadow: 0 10px 40px 0 rgba(0, 0, 0, 0.5);
             position: relative;
             overflow: hidden;
           }
@@ -192,19 +194,20 @@ export async function onRequestGet(context) {
             content: '';
             position: absolute;
             top: 0; left: 0; width: 100%; height: 2px;
-            background: linear-gradient(90deg, #00f0ff, #ff0055);
+            background: linear-gradient(90deg, #00f0ff, #ffd700, #ff0055);
           }
           .panel-header {
-            font-size: 16px;
-            font-weight: 600;
+            font-size: 15px;
+            font-weight: 700;
             color: #00f0ff;
             margin-bottom: 15px;
             display: flex;
             align-items: center;
             justify-content: space-between;
+            letter-spacing: 0.5px;
           }
 
-          /* 顶部统计双卡片布局 */
+          /* 顶部统计双卡片 */
           .stats-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -214,31 +217,67 @@ export async function onRequestGet(context) {
           .stat-hero {
             text-align: center;
             padding: 20px 10px;
-            border-radius: 10px;
-            background: radial-gradient(circle, rgba(0,240,255,0.08) 0%, rgba(0,0,0,0) 70%);
-            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            background: radial-gradient(circle at center, rgba(0,240,255,0.1) 0%, rgba(0,0,0,0.3) 100%);
+            border: 1px solid rgba(0, 240, 255, 0.2);
+            position: relative;
           }
           .stat-hero.income-box {
-            background: radial-gradient(circle, rgba(255,215,0,0.1) 0%, rgba(0,0,0,0) 70%);
-            border-color: rgba(255, 215, 0, 0.2);
+            background: radial-gradient(circle at center, rgba(255,215,0,0.12) 0%, rgba(0,0,0,0.3) 100%);
+            border-color: rgba(255, 215, 0, 0.3);
           }
-          .stat-hero .label { font-size: 13px; color: #8a99ad; letter-spacing: 1px; }
+          .stat-hero .label { font-size: 12px; color: #8a99ad; letter-spacing: 1.5px; font-weight: 600; }
           .stat-hero .num {
-            font-size: 48px;
+            font-size: 52px;
             font-weight: 900;
             font-family: 'Impact', sans-serif, monospace;
             background: linear-gradient(180deg, #ffffff 0%, #00f0ff 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            text-shadow: 0 0 20px rgba(0, 240, 255, 0.5);
-            transition: transform 0.2s ease;
+            text-shadow: 0 0 25px rgba(0, 240, 255, 0.4);
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
             display: inline-block;
           }
           .stat-hero.income-box .num {
             background: linear-gradient(180deg, #ffffff 0%, #ffd700 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            text-shadow: 0 0 20px rgba(255, 215, 0, 0.5);
+            text-shadow: 0 0 25px rgba(255, 215, 0, 0.6);
+          }
+
+          /* 极具弹性的浮动夸张动画 */
+          .gold-pop {
+            animation: goldShockwave 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards !important;
+          }
+          @keyframes goldShockwave {
+            0% { transform: scale(1); filter: drop-shadow(0 0 0px #ffd700); }
+            50% { transform: scale(1.35) translateY(-5px); filter: drop-shadow(0 0 35px #ffd700); }
+            100% { transform: scale(1); filter: drop-shadow(0 0 0px #ffd700); }
+          }
+
+          /* 屏幕中央漂浮收益特效 (+￥8.00) */
+          .cash-float-container {
+            position: fixed;
+            top: 40%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 10000;
+          }
+          .cash-float-item {
+            font-family: 'Impact', sans-serif;
+            font-size: 56px;
+            font-weight: 900;
+            color: #ffd700;
+            text-shadow: 0 0 20px #ff0055, 0 0 40px #ffd700;
+            animation: floatUpAndOut 1.2s cubic-bezier(0.08, 0.82, 0.17, 1) forwards;
+            position: absolute;
+            white-space: nowrap;
+          }
+          @keyframes floatUpAndOut {
+            0% { opacity: 0; transform: translate(-50%, 20px) scale(0.5) rotate(-5deg); }
+            30% { opacity: 1; transform: translate(-50%, -30px) scale(1.3) rotate(3deg); }
+            100% { opacity: 0; transform: translate(-50%, -120px) scale(0.9) rotate(0deg); }
           }
 
           .feed-stream {
@@ -252,8 +291,8 @@ export async function onRequestGet(context) {
           .feed-stream::-webkit-scrollbar { width: 4px; }
           .feed-stream::-webkit-scrollbar-thumb { background: rgba(0, 240, 255, 0.3); border-radius: 4px; }
           .feed-item {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.06);
             padding: 12px 16px;
             border-radius: 8px;
             display: flex;
@@ -264,7 +303,7 @@ export async function onRequestGet(context) {
           }
           .feed-item:hover {
             background: rgba(0, 240, 255, 0.08);
-            border-color: rgba(0, 240, 255, 0.4);
+            border-color: rgba(0, 240, 255, 0.3);
             transform: translateX(4px);
           }
           @keyframes slideDown {
@@ -296,12 +335,46 @@ export async function onRequestGet(context) {
             padding: 2px 8px;
             border-radius: 12px;
           }
+
           .city-list { display: flex; flex-direction: column; gap: 15px; margin-top: 10px; }
           .city-item { font-size: 13px; }
           .city-header { display: flex; justify-content: space-between; margin-bottom: 6px; }
           .city-num { color: #00f0ff; font-weight: bold; }
-          .progress-bar { height: 6px; background: rgba(255, 255, 255, 0.1); border-radius: 3px; overflow: hidden; }
-          .progress-fill { height: 100%; background: linear-gradient(90deg, #ff0055, #00f0ff); border-radius: 3px; transition: width 0.5s ease; }
+          .progress-bar { height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; overflow: hidden; }
+          .progress-fill { height: 100%; background: linear-gradient(90deg, #ff0055, #ffd700, #00f0ff); border-radius: 3px; transition: width 0.5s ease; }
+
+          /* 高大上的大数据中心侧边卡片 */
+          .bigdata-panel {
+            background: radial-gradient(circle at top left, rgba(0,240,255,0.15), rgba(0,0,0,0.4));
+            border: 1px solid rgba(0, 240, 255, 0.25);
+            border-radius: 12px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+          }
+          .bigdata-title {
+            font-size: 14px;
+            font-weight: 800;
+            color: #00f0ff;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+          }
+          .stat-metric {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255,255,255,0.03);
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            border: 1px solid rgba(255,255,255,0.05);
+          }
+          .stat-metric span { color: #8a99ad; }
+          .stat-metric strong { color: #ffd700; font-family: monospace; font-size: 14px; }
+
           .live-toast-container {
             position: fixed;
             bottom: 30px;
@@ -314,9 +387,9 @@ export async function onRequestGet(context) {
           }
           .live-toast {
             pointer-events: auto;
-            background: rgba(15, 23, 42, 0.95);
-            border: 1px solid #00f0ff;
-            box-shadow: 0 0 15px rgba(0, 240, 255, 0.3);
+            background: rgba(10, 16, 26, 0.95);
+            border: 1px solid #ffd700;
+            box-shadow: 0 0 20px rgba(255, 215, 0, 0.3);
             color: #fff;
             padding: 12px 20px;
             border-radius: 8px;
@@ -343,12 +416,13 @@ export async function onRequestGet(context) {
       </head>
       <body>
 
+        <div class="cash-float-container" id="cashFloatBox"></div>
         <div class="live-toast-container" id="toastContainer"></div>
 
         <div class="dashboard-header">
           <div class="title-area">
-            <span class="live-tag">LIVE 中控台</span>
-            <h1>今日访客实时中控屏</h1>
+            <span class="live-tag">GLOBAL LIVE</span>
+            <h1>全球直播流量大数据控制中心</h1>
           </div>
           <div class="clock-box" id="liveClock">00:00:00</div>
         </div>
@@ -358,18 +432,18 @@ export async function onRequestGet(context) {
             
             <div class="stats-grid">
               <div class="stat-hero">
-                <div class="label">TODAY VISITS / 今日实时访客</div>
+                <div class="label">GLOBAL VISITS / 全球实时并发访客总量</div>
                 <div class="num" id="todayHeroNum">${todayVisits}</div>
               </div>
               <div class="stat-hero income-box">
-                <div class="label">ESTIMATED REVENUE / 今日预估收入</div>
+                <div class="label">REALTIME REVENUE / 实时估算商业收益</div>
                 <div class="num" id="todayIncomeNum">¥ ${todayIncome}</div>
               </div>
             </div>
 
             <div class="panel-header">
-              <span>🔥 最新访客实时推刷流水</span>
-              <span style="font-size: 12px; color: #8a99ad; font-weight: normal;">自动无感更新中</span>
+              <span>🔥 实时高频全网数据流 (Real-time Stream)</span>
+              <span style="font-size: 12px; color: #8a99ad; font-weight: normal;">高并发无感同步中</span>
             </div>
 
             <div class="feed-stream" id="feedStream">
@@ -380,17 +454,29 @@ export async function onRequestGet(context) {
           <div style="display: flex; flex-direction: column; gap: 20px;">
             <div class="card-panel">
               <div class="panel-header">
-                <span>🏙️ 今日热门区域榜 TOP 5</span>
+                <span>🏙️ 区域流量分布榜 TOP 5</span>
               </div>
               <div class="city-list" id="cityList">
                 ${renderCityProgress(cityRank)}
               </div>
             </div>
 
-            <div class="card-panel" style="flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
-              <div style="font-size: 36px; margin-bottom: 10px;">💰</div>
-              <div style="font-size: 14px; color: #ffd700; font-weight: bold;">汇率基准：¥ 8.00 / 访客</div>
-              <div style="font-size: 12px; color: #62728d; margin-top: 6px;">根据实时进入流量自动计算估算收益</div>
+            <div class="bigdata-panel">
+              <div class="bigdata-title">
+                <span>🌐</span> 全球直播大数据统计中心
+              </div>
+              <div class="stat-metric">
+                <span>计算节点状态</span>
+                <strong style="color: #00f0ff;">Active (100%)</strong>
+              </div>
+              <div class="stat-metric">
+                <span>数据吞吐延迟</span>
+                <strong style="color: #00f0ff;">< 12ms</strong>
+              </div>
+              <div class="stat-metric">
+                <span>流量转化溢价</span>
+                <strong>+ ¥ 8.00 / Visit</strong>
+              </div>
             </div>
           </div>
         </div>
@@ -405,14 +491,25 @@ export async function onRequestGet(context) {
 
           let lastSeenId = ${latestDetails[0] ? (latestDetails[0].id || 0) : 0};
 
+          // 触发中央飘字狂欢效果
+          function triggerCashEffect() {
+            const box = document.getElementById('cashFloatBox');
+            if (!box) return;
+            const el = document.createElement('div');
+            el.className = 'cash-float-item';
+            el.innerText = '+ ￥8.00';
+            box.appendChild(el);
+            setTimeout(() => el.remove(), 1200);
+          }
+
           function showToast(record) {
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
             toast.className = 'live-toast';
             toast.innerHTML = \`
-              <div style="font-size: 20px;">💵</div>
+              <div style="font-size: 24px;">💎</div>
               <div>
-                <div style="font-weight: bold; color: #ffd700; font-size: 13px;">收益 +8 元！</div>
+                <div style="font-weight: bold; color: #ffd700; font-size: 13px;">实时数据捕获！收益 +8 元</div>
                 <div style="font-size: 12px; color: #e2e8f0; margin-top: 2px;">
                   来自 <strong>\${record.country} \${record.city}</strong> (\${record.ip})
                 </div>
@@ -436,17 +533,19 @@ export async function onRequestGet(context) {
                 const numEl = document.getElementById('todayHeroNum');
                 if (numEl && numEl.innerText != data.todayCount) {
                   numEl.innerText = data.todayCount;
-                  numEl.style.transform = 'scale(1.25)';
-                  setTimeout(() => numEl.style.transform = 'scale(1)', 200);
                 }
               }
 
               if (data.todayIncome !== undefined) {
                 const incomeEl = document.getElementById('todayIncomeNum');
-                if (incomeEl && incomeEl.innerText != ('¥ ' + data.todayIncome)) {
-                  incomeEl.innerText = '¥ ' + data.todayIncome;
-                  incomeEl.style.transform = 'scale(1.25)';
-                  setTimeout(() => incomeEl.style.transform = 'scale(1)', 200);
+                const newText = '¥ ' + data.todayIncome;
+                if (incomeEl && incomeEl.innerText !== newText) {
+                  incomeEl.innerText = newText;
+                  
+                  // 夸张的金色冲击特效
+                  incomeEl.classList.remove('gold-pop');
+                  void incomeEl.offsetWidth; 
+                  incomeEl.classList.add('gold-pop');
                 }
               }
 
@@ -454,6 +553,7 @@ export async function onRequestGet(context) {
                 const newest = data.latest[0];
                 if (lastSeenId && newest.id > lastSeenId) {
                   showToast(newest);
+                  triggerCashEffect(); // 新增收益飘字动画
 
                   const stream = document.getElementById('feedStream');
                   if (stream) {
