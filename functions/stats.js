@@ -1,6 +1,39 @@
 // ==========================================
-// 1. 深度省市解析与精度打分引擎
+// 1. 拼音/英文转中文映射字典与解析引擎
 // ==========================================
+const PINYIN_MAP = {
+  // 特别行政区与台湾
+  'hong kong': '香港', 'hongkong': '香港', 'hk': '香港',
+  'macau': '澳门', 'macao': '澳门',
+  'taiwan': '台湾', 'taipei': '台北',
+
+  // 直辖市
+  'beijing': '北京', 'shanghai': '上海', 'tianjin': '天津', 'chongqing': '重庆',
+
+  // 省份/自治区
+  'guangdong': '广东', 'zhejiang': '浙江', 'jiangsu': '江苏', 'sichuan': '四川',
+  'shandong': '山东', 'henan': '河南', 'hubei': '湖北', 'hunan': '湖南',
+  'fujian': '福建', 'hebei': '河北', 'shaanxi': '陕西', 'shanxi': '山西',
+  'anhui': '安徽', 'jiangxi': '江西', 'liaoning': '辽宁', 'heilongjiang': '黑龙江',
+  'jilin': '吉林', 'yunnan': '云南', 'guizhou': '贵州', 'guangxi': '广西',
+  'hainan': '海南', 'gansu': '甘肃', 'qinghai': '青海', 'inner mongolia': '内蒙古',
+  'neimenggu': '内蒙古', 'xinjiang': '新疆', 'xizang': '西藏', 'tibet': '西藏',
+  'ningxia': '宁夏',
+
+  // 常见城市拼音
+  'guangzhou': '广州', 'shenzhen': '深圳', 'dongguan': '东莞', 'foshan': '佛山',
+  'zhuhai': '珠海', 'huizhou': '惠州', 'zhongshan': '中山', 'hangzhou': '杭州',
+  'ningbo': '宁波', 'wenzhou': '温州', 'nanjing': '南京', 'suzhou': '苏州',
+  'wuxi': '无锡', 'changzhou': '常州', 'chengdu': '成都', 'wuhan': '武汉',
+  'changsha': '长沙', 'zhengzhou': '郑州', 'xian': '西安', 'jinan': '济南',
+  'qingdao': '青岛', 'fuzhou': '福州', 'xiamen': '厦门', 'hefei': '合肥',
+  'nanchang': '南昌', 'shenyang': '沈阳', 'dalian': '大连', 'harbin': '哈尔滨',
+  'changchun': '长春', 'kunming': '昆明', 'guiyang': '贵阳', 'nanning': '南宁',
+  'haikou': '海口', 'sanya': '三亚', 'lanzhou': '兰州', 'taiyuan': '太原',
+  'shijiazhuang': '石家庄', 'urrumqi': '乌鲁木齐', 'hohhot': '呼和浩特',
+  'yinchuan': '银川', 'xining': '西宁', 'lhasa': '拉萨'
+};
+
 const PROVINCES = [
   '香港', '澳门', '台湾',
   '陕西', '山西', '山东', '河南', '河北', '湖南', '湖北', '广东', '广西', 
@@ -8,6 +41,26 @@ const PROVINCES = [
   '甘肃', '青海', '内蒙古', '新疆', '西藏', '海南', '宁夏', '江西', '安徽',
   '北京', '上海', '天津', '重庆'
 ];
+
+function convertPinyinToZh(str) {
+  if (!str) return '';
+  let lowerStr = str.toLowerCase().trim();
+  
+  // 匹配拼音字典
+  if (PINYIN_MAP[lowerStr]) {
+    return PINYIN_MAP[lowerStr];
+  }
+
+  // 尝试替换字符串中的英文单词
+  for (let [py, zh] of Object.entries(PINYIN_MAP)) {
+    if (lowerStr.includes(py)) {
+      lowerStr = lowerStr.replace(new RegExp(py, 'g'), zh);
+    }
+  }
+
+  // 将首字母大写的拼音剔除纯英文非匹配项
+  return lowerStr.replace(/[a-zA-Z]/g, '').trim() || str;
+}
 
 function evaluatePrecision(res) {
   if (!res || !res.city || res.city === '中国' || res.city === '未知地区' || res.city === '未知') return 0;
@@ -35,14 +88,17 @@ function evaluatePrecision(res) {
 function cleanAndExtractLocation(rawStr) {
   if (!rawStr) return null;
 
+  // 优先把英文/拼音转换为中文
+  let zhStr = convertPinyinToZh(rawStr);
+
   // 特殊区域直接保留
-  if (rawStr.includes('香港')) return '香港特别行政区';
-  if (rawStr.includes('澳门')) return '澳门特别行政区';
-  if (rawStr.includes('台湾')) return '台湾省';
+  if (zhStr.includes('香港')) return '香港特别行政区';
+  if (zhStr.includes('澳门')) return '澳门特别行政区';
+  if (zhStr.includes('台湾')) return '台湾省';
 
   for (let prov of PROVINCES) {
-    if (rawStr.includes(prov)) {
-      let match = rawStr.match(new RegExp(`${prov}(?:省|市)?([\\u4e00-\\u9fa5]+)`));
+    if (zhStr.includes(prov)) {
+      let match = zhStr.match(new RegExp(`${prov}(?:省|市)?([\\u4e00-\\u9fa5]+)`));
       if (match && match[1]) {
         let cityName = match[1]
           .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房|市|区|县)/g, '')
@@ -55,7 +111,7 @@ function cleanAndExtractLocation(rawStr) {
     }
   }
 
-  let cleaned = rawStr
+  let cleaned = zhStr
     .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房)/g, '')
     .replace(/^中国\s*/, '')
     .trim();
@@ -96,27 +152,13 @@ async function apiIpWhoIsIo(cleanIp) {
   if (data && data.success) {
     const region = data.region || '';
     const city = data.city || '';
-    const parsed = cleanAndExtractLocation(`${region}${city}`) || data.city || data.region;
+    const parsed = cleanAndExtractLocation(`${region}${city}`) || cleanAndExtractLocation(data.city) || cleanAndExtractLocation(data.region);
     if (parsed) {
       const item = { country: data.country_code || 'CN', city: parsed };
       return { ...item, score: evaluatePrecision(item) };
     }
   }
   throw new Error('IpWhoIsIo failed');
-}
-
-async function apiIpSb(cleanIp) {
-  const res = await cleanFetch(`https://api.ip.sb/geoip/${cleanIp}`);
-  if (!res.ok) throw new Error('IP.SB error');
-  const data = await res.json();
-  const region = data.region || '';
-  const city = data.city || '';
-  const parsed = cleanAndExtractLocation(`${region}${city}`) || data.city || data.region;
-  if (parsed) {
-    const item = { country: data.country_code || 'CN', city: parsed };
-    return { ...item, score: evaluatePrecision(item) };
-  }
-  throw new Error('IP.SB failed');
 }
 
 async function apiIpWhoisApp(cleanIp) {
@@ -126,7 +168,7 @@ async function apiIpWhoisApp(cleanIp) {
   if (data && data.success) {
     const region = data.region || '';
     const city = data.city || '';
-    const parsed = cleanAndExtractLocation(`${region}${city}`) || data.city || data.region;
+    const parsed = cleanAndExtractLocation(`${region}${city}`) || cleanAndExtractLocation(data.city) || cleanAndExtractLocation(data.region);
     if (parsed) {
       const item = { country: data.country_code || 'CN', city: parsed };
       return { ...item, score: evaluatePrecision(item) };
@@ -142,13 +184,27 @@ async function apiIpApi(cleanIp) {
   if (data && data.status === 'success') {
     const region = data.regionName || '';
     const city = data.city || '';
-    const parsed = cleanAndExtractLocation(`${region}${city}`) || data.city || data.regionName;
+    const parsed = cleanAndExtractLocation(`${region}${city}`) || cleanAndExtractLocation(data.city) || cleanAndExtractLocation(data.regionName);
     if (parsed) {
       const item = { country: data.countryCode || 'CN', city: parsed };
       return { ...item, score: evaluatePrecision(item) };
     }
   }
   throw new Error('IpApi failed');
+}
+
+async function apiIpSb(cleanIp) {
+  const res = await cleanFetch(`https://api.ip.sb/geoip/${cleanIp}`);
+  if (!res.ok) throw new Error('IP.SB error');
+  const data = await res.json();
+  const region = data.region || '';
+  const city = data.city || '';
+  const parsed = cleanAndExtractLocation(`${region}${city}`) || cleanAndExtractLocation(data.city) || cleanAndExtractLocation(data.region);
+  if (parsed) {
+    const item = { country: data.country_code || 'CN', city: parsed };
+    return { ...item, score: evaluatePrecision(item) };
+  }
+  throw new Error('IP.SB failed');
 }
 
 const globalIpCache = new Map();
@@ -167,12 +223,12 @@ async function resolveBestGlobalGeo(ip, requestCf) {
     return globalIpCache.get(cleanIp);
   }
 
-  // 优先通过第三方接口查询 IP 对应的具体地区
+  // 优先通过第三方接口查询 IP 对应的具体中文地区
   const promises = [
     apiIpWhoIsIo(cleanIp),
-    apiIpSb(cleanIp),
     apiIpWhoisApp(cleanIp),
-    apiIpApi(cleanIp)
+    apiIpApi(cleanIp),
+    apiIpSb(cleanIp)
   ];
 
   try {
@@ -197,7 +253,7 @@ async function resolveBestGlobalGeo(ip, requestCf) {
     console.error("IP解析异常:", e);
   }
 
-  // 仅在第三方接口均失败时，才使用 Cloudflare 节点保底
+  // 保底兜底逻辑
   const fallbackCountry = requestCf?.country || 'CN';
   let fallbackCity = '未知地区';
   if (fallbackCountry === 'HK') fallbackCity = '香港特别行政区';
@@ -598,7 +654,7 @@ export async function onRequestGet(context) {
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问地区排行榜 (点击展开明细)
-              <span class="sub-tip">🌐 高精度边缘节点解析</span>
+              <span class="sub-tip">🌐 高精度中文解析</span>
             </h2>
             <div class="table-responsive">
               <table>
