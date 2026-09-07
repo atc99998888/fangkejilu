@@ -8,39 +8,32 @@ const PROVINCES = [
   '北京', '上海', '天津', '重庆', '香港', '澳门'
 ];
 
-// 判断解析结果的“精细度得分”（得分越高越优先选择）
 function evaluatePrecision(res) {
   if (!res || !res.city || res.city === '中国' || res.city === '未知地区' || res.city === '未知') return 0;
   
   let score = 1;
   const locationStr = res.city;
 
-  // 1. 匹配到具体“省+市/县”（如：陕西榆林、广东深圳）得最高分 5 分
   for (let prov of PROVINCES) {
     if (locationStr.includes(prov)) {
       if (locationStr.length > prov.length) {
-        score = 5; // 精准到地级市/县区
+        score = 5; // 具体的省+市/县
       } else {
-        score = 2; // 仅精准到省份
+        score = 2; // 仅省份
       }
       break;
     }
   }
 
-  // 2. 如果包含海外城市或直辖市且长度适中，得 4 分
   if (score === 1 && locationStr.length >= 2) score = 4;
-
-  // 3. 如果成功识别出非 CN 的国家代码，额外 +1 分
   if (res.country && res.country !== 'CN' && res.country !== 'Unknown') score += 1;
 
   return score;
 }
 
-// 统一提取省市名称，去除“省”、“电信”、“机房”等杂质
 function cleanAndExtractLocation(rawStr) {
   if (!rawStr) return null;
 
-  // 1. 优先提取国内“省+市”
   for (let prov of PROVINCES) {
     if (rawStr.includes(prov)) {
       let match = rawStr.match(new RegExp(`${prov}(?:省|市)?([\\u4e00-\\u9fa5]+)`));
@@ -56,7 +49,6 @@ function cleanAndExtractLocation(rawStr) {
     }
   }
 
-  // 2. 基础杂质清洗
   let cleaned = rawStr
     .replace(/(电信|联通|移动|铁通|广电|长城宽带|教育网|阿里云|腾讯云|华为云|百度云|IDC|机房)/g, '')
     .replace(/^中国\s*/, '')
@@ -65,15 +57,17 @@ function cleanAndExtractLocation(rawStr) {
   return cleaned || null;
 }
 
-// 带超时与请求头伪装的 Fetch 封装
-async function fetchWithTimeout(url, timeout = 2500) {
+// 独立的隔离 Fetch 封装，防止 Header 泄露导致第三方重定向到 m.baidu.com
+async function cleanFetch(url, timeout = 2000) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
   try {
     const response = await fetch(url, { 
+      method: 'GET',
       signal: controller.signal,
+      referrerPolicy: 'no-referrer',
       headers: { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'application/json, text/plain, */*'
       }
     });
@@ -86,12 +80,11 @@ async function fetchWithTimeout(url, timeout = 2500) {
 }
 
 // ==========================================
-// 2. 全球/国内外 API 深度对接节点 (新增至 6 个高可用接口)
+// 2. 高可用 IP 地理位置查询 API 节点
 // ==========================================
 
-// [接口 1] 百度 OpenData（国内地级市最精准）
 async function apiBaidu(cleanIp) {
-  const res = await fetchWithTimeout(`https://opendata.baidu.com/api.php?query=${encodeURIComponent(cleanIp)}&resource_id=6006&oe=utf8`);
+  const res = await cleanFetch(`https://opendata.baidu.com/api.php?query=${encodeURIComponent(cleanIp)}&resource_id=6006&oe=utf8`);
   if (!res.ok) throw new Error('Baidu HTTP error');
   const data = await res.json();
   const loc = data?.data?.[0]?.location;
@@ -103,9 +96,8 @@ async function apiBaidu(cleanIp) {
   throw new Error('Baidu parse failed');
 }
 
-// [接口 2] IpWhoIs.io (中文支持极好，免费额度高)
 async function apiIpWhoIsIo(cleanIp) {
-  const res = await fetchWithTimeout(`https://ipwho.is/${cleanIp}?lang=zh-CN`);
+  const res = await cleanFetch(`https://ipwho.is/${cleanIp}?lang=zh-CN`);
   if (!res.ok) throw new Error('IpWhoIsIo HTTP error');
   const data = await res.json();
   if (data && data.success) {
@@ -120,9 +112,8 @@ async function apiIpWhoIsIo(cleanIp) {
   throw new Error('IpWhoIsIo parse failed');
 }
 
-// [接口 3] IP.SB
 async function apiIpSb(cleanIp) {
-  const res = await fetchWithTimeout(`https://api.ip.sb/geoip/${cleanIp}`);
+  const res = await cleanFetch(`https://api.ip.sb/geoip/${cleanIp}`);
   if (!res.ok) throw new Error('IP.SB HTTP error');
   const data = await res.json();
   const region = data.region || '';
@@ -135,9 +126,8 @@ async function apiIpSb(cleanIp) {
   throw new Error('IP.SB parse failed');
 }
 
-// [接口 4] IpWhois App (包含详细省份信息)
 async function apiIpWhoisApp(cleanIp) {
-  const res = await fetchWithTimeout(`https://ipwhois.app/json/${cleanIp}?lang=zh-CN`);
+  const res = await cleanFetch(`https://ipwhois.app/json/${cleanIp}?lang=zh-CN`);
   if (!res.ok) throw new Error('IpWhoisApp HTTP error');
   const data = await res.json();
   if (data && data.success) {
@@ -152,9 +142,8 @@ async function apiIpWhoisApp(cleanIp) {
   throw new Error('IpWhoisApp parse failed');
 }
 
-// [接口 5] IpApi (HTTPS/JSON 路由)
 async function apiIpApi(cleanIp) {
-  const res = await fetchWithTimeout(`http://ip-api.com/json/${cleanIp}?fields=status,countryCode,regionName,city&lang=zh-CN`);
+  const res = await cleanFetch(`http://ip-api.com/json/${cleanIp}?fields=status,countryCode,regionName,city&lang=zh-CN`);
   if (!res.ok) throw new Error('IpApi HTTP error');
   const data = await res.json();
   if (data && data.status === 'success') {
@@ -169,29 +158,8 @@ async function apiIpApi(cleanIp) {
   throw new Error('IpApi parse failed');
 }
 
-// [接口 6] IP2Location 节点
-async function apiIp2Location(cleanIp) {
-  const res = await fetchWithTimeout(`https://api.ip2location.io/?ip=${cleanIp}`);
-  if (!res.ok) throw new Error('IP2Location HTTP error');
-  const data = await res.json();
-  if (data && data.country_code) {
-    const region = data.region_name || '';
-    const city = data.city_name || '';
-    const parsed = cleanAndExtractLocation(`${region}${city}`);
-    if (parsed) {
-      const item = { country: data.country_code, city: parsed };
-      return { ...item, score: evaluatePrecision(item) };
-    }
-  }
-  throw new Error('IP2Location parse failed');
-}
-
-// 全局内存缓存
 const globalIpCache = new Map();
 
-// ==========================================
-// 3. 全量并发竞速 + 精度挑选调度引擎
-// ==========================================
 async function resolveBestGlobalGeo(ip) {
   if (!ip || ip === 'Unknown' || ip === '127.0.0.1' || ip === '::1') {
     return { country: 'CN', city: '局域网/本地' };
@@ -206,14 +174,12 @@ async function resolveBestGlobalGeo(ip) {
     return globalIpCache.get(cleanIp);
   }
 
-  // 并发请求所有 6 个接口
   const promises = [
     apiBaidu(cleanIp),
     apiIpWhoIsIo(cleanIp),
     apiIpSb(cleanIp),
     apiIpWhoisApp(cleanIp),
-    apiIpApi(cleanIp),
-    apiIp2Location(cleanIp)
+    apiIpApi(cleanIp)
   ];
 
   try {
@@ -222,11 +188,9 @@ async function resolveBestGlobalGeo(ip) {
 
     for (const res of results) {
       if (res.status === 'fulfilled' && res.value) {
-        // 分数高于当前记录，则更新为最佳选择
         if (!bestResult || res.value.score > bestResult.score) {
           bestResult = res.value;
         }
-        // 如果已经拿到了满分 5 分（省+市完整名称），直接选用，提前结束筛选
         if (bestResult.score >= 5) break;
       }
     }
@@ -237,17 +201,40 @@ async function resolveBestGlobalGeo(ip) {
       return finalData;
     }
   } catch (e) {
-    console.error("并发竞速解析异常:", e);
+    console.error("IP解析异常:", e);
   }
 
-  // 兜底策略
-  const fallback = { country: 'CN', city: '未知地区' };
+  const fallback = { country: 'CN', city: '中国' };
   globalIpCache.set(cleanIp, fallback);
   return fallback;
 }
 
+// Batch处理辅助，防止瞬时并发冲垮 API 限流
+async function processBatch(rows, batchSize = 5) {
+  if (!rows || rows.length === 0) return [];
+  const results = [];
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const chunk = rows.slice(i, i + batchSize);
+    const processedChunk = await Promise.all(chunk.map(async (row) => {
+      const realIp = row.ip || 'Unknown';
+      const geo = await resolveBestGlobalGeo(realIp);
+      return {
+        ...row,
+        ip: realIp,
+        country: geo.country,
+        city: geo.city,
+        displayIp: escapeHtml(realIp),
+        displayCountry: translateCountry(geo.country),
+        displayCity: geo.city
+      };
+    }));
+    results.push(...processedChunk);
+  }
+  return results;
+}
+
 // ==========================================
-// 4. Cloudflare Pages 主入口函数
+// 3. Cloudflare Pages 主入口
 // ==========================================
 export async function onRequestGet(context) {
   const { request, env } = context;
@@ -263,14 +250,16 @@ export async function onRequestGet(context) {
     return new Response("数据库未绑定：请在 Cloudflare Pages 设置中绑定名为 DB 的 D1 数据库", { status: 500 });
   }
 
-  // 🛠️ 修复域名显示问题：准确提取客户端真实访问域名（排除代理/中转导致变成 m.baidu.com）
-  const rawHost = request.headers.get("x-forwarded-host") || request.headers.get("host") || url.hostname;
-  const currentDomain = rawHost.split(':')[0].toLowerCase(); // 统一转为小写并去除端口
+  // 严格域名解析逻辑，排除 m.baidu.com 干扰
+  let requestDomain = request.headers.get("x-forwarded-host") || request.headers.get("host") || url.hostname;
+  requestDomain = requestDomain.split(':')[0].toLowerCase().trim();
+  if (requestDomain.includes('baidu.com')) {
+    requestDomain = url.hostname; // 如果被污染为百度，强制使用当前实际请求 URL 域名
+  }
 
   try {
     await env.DB.exec("CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL, ip TEXT DEFAULT 'Unknown', city TEXT DEFAULT 'Unknown', country TEXT DEFAULT 'Unknown', visit_time DATETIME DEFAULT CURRENT_TIMESTAMP);");
 
-    // 统计数据
     const todayRes = await env.DB.prepare(`
       SELECT COUNT(*) as count FROM visits 
       WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
@@ -283,34 +272,14 @@ export async function onRequestGet(context) {
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
-    // 批量并发处理 IP 定位
-    const processDetails = async (rows) => {
-      if (!rows || rows.length === 0) return [];
-      
-      return await Promise.all(rows.map(async (row) => {
-        const realIp = row.ip || 'Unknown';
-        const geo = await resolveBestGlobalGeo(realIp);
-
-        return {
-          ...row,
-          ip: realIp,
-          country: geo.country,
-          city: geo.city,
-          displayIp: escapeHtml(realIp),
-          displayCountry: translateCountry(geo.country),
-          displayCity: geo.city
-        };
-      }));
-    };
-
-    // 全量读取今日与昨日的访问记录（不加 LIMIT 限制）
+    // 采用批次处理，避免接口并发被限速
     const todayDetailsRaw = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
       FROM visits 
       WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
       ORDER BY id DESC
     `).all();
-    const todayDetails = await processDetails(todayDetailsRaw?.results || []);
+    const todayDetails = await processBatch(todayDetailsRaw?.results || [], 5);
 
     const yesterdayDetailsRaw = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
@@ -318,9 +287,8 @@ export async function onRequestGet(context) {
       WHERE DATE(DATETIME(visit_time, '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
       ORDER BY id DESC
     `).all();
-    const yesterdayDetails = await processDetails(yesterdayDetailsRaw?.results || []);
+    const yesterdayDetails = await processBatch(yesterdayDetailsRaw?.results || [], 5);
 
-    // 7天趋势
     const last7DaysRes = await env.DB.prepare(`
       SELECT DATE(DATETIME(visit_time, '+8 hours')) as date, COUNT(*) as count 
       FROM visits 
@@ -343,7 +311,6 @@ export async function onRequestGet(context) {
       });
     }
 
-    // 域名流量排行榜
     const domainRankRes = await env.DB.prepare(`
       SELECT domain, COUNT(*) as domain_total 
       FROM visits 
@@ -364,7 +331,6 @@ export async function onRequestGet(context) {
       yesterdayDomainMap[item.domain] = item.domain_total;
     });
 
-    // 地区流量排行榜（修复前几个之后的地区不识别问题）
     const cityRankMap = {};
     todayDetails.forEach(item => {
       const key = `${item.country}_${item.displayCity}`;
@@ -496,7 +462,7 @@ export async function onRequestGet(context) {
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>集群多域名流量高精度控制台</title>
+        <title>集群访客控制台</title>
         <style>
           * { box-sizing: border-box; }
           body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background: #f0f2f5; color: #333; margin: 0; }
@@ -628,7 +594,7 @@ export async function onRequestGet(context) {
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问地区排行榜 (点击展开明细)
-              <span class="sub-tip">🌐 6 源全球 API 并发高精度定位筛选</span>
+              <span class="sub-tip">🌐 5 源并发分批高精度解析</span>
             </h2>
             <div class="table-responsive">
               <table>
@@ -760,7 +726,6 @@ export async function onRequestGet(context) {
   }
 }
 
-// Punycode 转换与工具函数
 function decodePunycodePart(input) {
   const BASE = 36, TMIN = 1, TMAX = 26, SKEW = 38, DAMP = 700, INITIAL_BIAS = 72, INITIAL_N = 128;
   function adapt(delta, numPoints, firstTime) {
