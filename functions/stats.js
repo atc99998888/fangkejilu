@@ -18,53 +18,16 @@ export async function onRequestGet(context) {
     // 自动初始化数据表
     await env.DB.exec("CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL, ip TEXT DEFAULT 'Unknown', city TEXT DEFAULT 'Unknown', country TEXT DEFAULT 'Unknown', visit_time DATETIME DEFAULT CURRENT_TIMESTAMP);");
 
-    // 定义 SQLite 时间兼容转换语句（统一转换为北京时间 +8 hours 的日期格式 YYYY-MM-DD）
-    const bjDateExpr = "DATE(DATETIME(IFNULL(visit_time, CURRENT_TIMESTAMP), '+8 hours'))";
-    const todayDateExpr = "DATE('now', '+8 hours')";
-    const yesterdayDateExpr = "DATE('now', '+8 hours', '-1 day')";
-
-    // 【新增】直播间风实时数据接口 (前端 AJAX 轮询请求)
-    if (url.searchParams.get("action") === "realtime") {
-      const latestRes = await env.DB.prepare(`
-        SELECT id, domain, ip, country, city, visit_time 
-        FROM visits 
-        ORDER BY id DESC LIMIT 5
-      `).all();
-
-      const todayRes = await env.DB.prepare(`
-        SELECT COUNT(*) as count FROM visits 
-        WHERE ${bjDateExpr} = ${todayDateExpr}
-      `).first();
-      
-      const rawRecords = latestRes?.results || [];
-      const formattedRecords = rawRecords.map(r => ({
-        id: r.id,
-        domain: punycodeToUnicode(r.domain),
-        ip: r.ip || 'Unknown',
-        country: translateCountry(r.country),
-        city: translateCity(r.city),
-        time: formatDate(r.visit_time),
-        rawTime: r.visit_time
-      }));
-
-      return new Response(JSON.stringify({
-        todayCount: todayRes?.count || 0,
-        latest: formattedRecords
-      }), {
-        headers: { "Content-Type": "application/json; charset=utf-8" }
-      });
-    }
-
     // 1. 获取【今日访问量】与【昨日访问量】
     const todayRes = await env.DB.prepare(`
       SELECT COUNT(*) as count FROM visits 
-      WHERE ${bjDateExpr} = ${todayDateExpr}
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
     `).first();
     const todayVisits = todayRes?.count || 0;
 
     const yesterdayRes = await env.DB.prepare(`
       SELECT COUNT(*) as count FROM visits 
-      WHERE ${bjDateExpr} = ${yesterdayDateExpr}
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
     `).first();
     const yesterdayVisits = yesterdayRes?.count || 0;
 
@@ -72,7 +35,7 @@ export async function onRequestGet(context) {
     const todayDetailsRes = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
       FROM visits 
-      WHERE ${bjDateExpr} = ${todayDateExpr}
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
       ORDER BY id DESC
     `).all();
     const todayDetails = todayDetailsRes?.results || [];
@@ -80,23 +43,23 @@ export async function onRequestGet(context) {
     const yesterdayDetailsRes = await env.DB.prepare(`
       SELECT domain, ip, country, city, visit_time 
       FROM visits 
-      WHERE ${bjDateExpr} = ${yesterdayDateExpr}
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
       ORDER BY id DESC
     `).all();
     const yesterdayDetails = yesterdayDetailsRes?.results || [];
 
     // 3. 获取最近 7 天每日访问量
     const last7DaysRes = await env.DB.prepare(`
-      SELECT ${bjDateExpr} as v_date, COUNT(*) as count 
+      SELECT DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) as date, COUNT(*) as count 
       FROM visits 
-      WHERE ${bjDateExpr} >= DATE('now', '+8 hours', '-6 days')
-      GROUP BY v_date
-      ORDER BY v_date ASC
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) >= DATE(DATETIME('now', '+8 hours', '-6 days'))
+      GROUP BY DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours'))
+      ORDER BY date ASC
     `).all();
 
     const last7DaysData = [];
     const dbDaysMap = {};
-    (last7DaysRes?.results || []).forEach(row => { if(row.v_date) dbDaysMap[row.v_date] = row.count; });
+    (last7DaysRes?.results || []).forEach(row => { if(row.date) dbDaysMap[row.date] = row.count; });
 
     for (let i = 6; i >= 0; i--) {
       const d = new Date(Date.now() + 8 * 3600 * 1000 - i * 24 * 3600 * 1000);
@@ -112,7 +75,7 @@ export async function onRequestGet(context) {
     const domainRankRes = await env.DB.prepare(`
       SELECT domain, COUNT(*) as domain_total 
       FROM visits 
-      WHERE ${bjDateExpr} = ${todayDateExpr}
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
       GROUP BY domain 
       ORDER BY domain_total DESC
     `).all();
@@ -121,7 +84,7 @@ export async function onRequestGet(context) {
     const yesterdayDomainRes = await env.DB.prepare(`
       SELECT domain, COUNT(*) as domain_total 
       FROM visits 
-      WHERE ${bjDateExpr} = ${yesterdayDateExpr}
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
       GROUP BY domain
     `).all();
     const yesterdayDomainMap = {};
@@ -129,11 +92,11 @@ export async function onRequestGet(context) {
       yesterdayDomainMap[item.domain] = item.domain_total;
     });
 
-    // 5. 查询【今日】与【昨日】城市数据
+    // 5. 查询【今日】与【昨日】城市数据（全量列出）
     const cityRankRes = await env.DB.prepare(`
       SELECT country, city, COUNT(*) as city_total 
       FROM visits 
-      WHERE ${bjDateExpr} = ${todayDateExpr}
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours'))
       GROUP BY country, city 
       ORDER BY city_total DESC
     `).all();
@@ -142,7 +105,7 @@ export async function onRequestGet(context) {
     const yesterdayCityRes = await env.DB.prepare(`
       SELECT country, city, COUNT(*) as city_total 
       FROM visits 
-      WHERE ${bjDateExpr} = ${yesterdayDateExpr}
+      WHERE DATE(DATETIME(COALESCE(visit_time, CURRENT_TIMESTAMP), '+8 hours')) = DATE(DATETIME('now', '+8 hours', '-1 day'))
       GROUP BY country, city
     `).all();
     const yesterdayCityMap = {};
@@ -169,7 +132,7 @@ export async function onRequestGet(context) {
     const todayTableRowsHtml = renderTableRows(todayDetails);
     const yesterdayTableRowsHtml = renderTableRows(yesterdayDetails);
 
-    // 构建映射
+    // 构建【按域名归类】和【按城市归类】的数据映射
     const domainDetailsMap = {};
     const cityDetailsMap = {};
 
@@ -182,7 +145,7 @@ export async function onRequestGet(context) {
       cityDetailsMap[cityKey].push(item);
     });
 
-    // 1. 生成域名排行榜 HTML
+    // 1. 生成可展开的域名排行榜 HTML
     let domainRankHtml = domainRank.map((item, index) => {
       const domain = item.domain;
       const list = domainDetailsMap[domain] || [];
@@ -224,7 +187,7 @@ export async function onRequestGet(context) {
       `;
     }).join('');
 
-    // 2. 生成城市排行榜 HTML
+    // 2. 生成可展开的城市排行榜 HTML
     let cityRankHtml = cityRank.map((item, index) => {
       const cityKey = `${item.country}_${item.city}`;
       const list = cityDetailsMap[cityKey] || [];
@@ -277,92 +240,9 @@ export async function onRequestGet(context) {
           * { box-sizing: border-box; }
           body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background: #f0f2f5; color: #333; margin: 0; }
           .container { max-width: 1000px; margin: 0 auto; }
-          .header { text-align: center; margin-bottom: 15px; }
+          .header { text-align: center; margin-bottom: 20px; }
           .header h1 { margin: 0; color: #1a1a1a; font-size: 22px; }
-
-          /* 【带货风】顶部实时战报走字灯栏 */
-          .live-banner {
-            background: linear-gradient(90deg, #ff416c, #ff4b2b);
-            color: white;
-            border-radius: 8px;
-            padding: 10px 16px;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            box-shadow: 0 4px 12px rgba(255, 65, 108, 0.3);
-          }
-          .live-badge {
-            background: #ffffff;
-            color: #ff416c;
-            font-size: 11px;
-            font-weight: bold;
-            padding: 2px 8px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            text-transform: uppercase;
-          }
-          .live-dot {
-            width: 6px;
-            height: 6px;
-            background: #ff416c;
-            border-radius: 50%;
-            animation: blink 1s infinite alternate;
-          }
-          @keyframes blink { from { opacity: 0.2; } to { opacity: 1; } }
-          .live-text { font-size: 13px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1; margin: 0 12px; }
-
-          /* 【带货风】右下角直播间弹幕悬浮卡片 */
-          .live-toast-container {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            z-index: 9999;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            pointer-events: none;
-          }
-          .live-toast {
-            pointer-events: auto;
-            background: rgba(0, 0, 0, 0.85);
-            color: #fff;
-            padding: 12px 18px;
-            border-radius: 30px;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            backdrop-filter: blur(8px);
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            animation: slideIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
-          }
-          .live-avatar {
-            width: 36px;
-            height: 36px;
-            background: linear-gradient(135deg, #1890ff, #722ed1);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
-            border: 2px solid #fff;
-          }
-          .live-toast-content { font-size: 12px; line-height: 1.4; }
-          .live-toast-title { font-weight: bold; color: #ffec3d; display: flex; align-items: center; gap: 6px; }
-          .live-toast-desc { color: #e8e8e8; }
           
-          @keyframes slideIn {
-            from { transform: translateX(120%) scale(0.8); opacity: 0; }
-            to { transform: translateX(0) scale(1); opacity: 1; }
-          }
-          @keyframes fadeOut {
-            from { transform: translateX(0) scale(1); opacity: 1; }
-            to { transform: translateX(120%) scale(0.8); opacity: 0; }
-          }
-
           /* 移动端卡片横向并排 */
           .stats-grid { 
             display: grid; 
@@ -373,7 +253,7 @@ export async function onRequestGet(context) {
           
           .stat-card { background: #fff; padding: 16px 20px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); text-align: center; cursor: pointer; transition: all 0.2s ease; border: 1px solid transparent; }
           .stat-card:hover { border-color: #0066ff; box-shadow: 0 4px 12px rgba(0,102,255,0.15); transform: translateY(-2px); }
-          .stat-card .num { font-size: 24px; font-weight: bold; color: #0066ff; margin-top: 4px; transition: transform 0.3s; }
+          .stat-card .num { font-size: 24px; font-weight: bold; color: #0066ff; margin-top: 4px; }
           .stat-card .label { font-size: 13px; color: #666; font-weight: 500; }
           .stat-card .tip { font-size: 11px; color: #0066ff; margin-top: 4px; font-weight: bold; }
 
@@ -385,15 +265,28 @@ export async function onRequestGet(context) {
           canvas { width: 100%!important; height: 100%!important; }
 
           /* 全局横向表格控制样式 */
-          .scroll-x { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+          .scroll-x {
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+          }
+
           table { width: 100%; border-collapse: collapse; margin-top: 4px; }
-          th, td { border: 1px solid #eef0f3; padding: 8px 10px; text-align: left; font-size: 13px; white-space: nowrap; }
+          th, td { 
+            border: 1px solid #eef0f3; 
+            padding: 8px 10px; 
+            text-align: left; 
+            font-size: 13px; 
+            white-space: nowrap; /* 强制单行横向拉伸，绝不挤压变形拉高表格 */
+          }
           th { background-color: #f8f9fa; color: #555; }
 
+          /* 可点击行样式 */
           tr.clickable-row { cursor: pointer; transition: background-color 0.15s ease; }
           tr.clickable-row:hover { background-color: #f0f7ff!important; }
           .arrow-icon { font-size: 10px; color: #888; margin-left: 6px; display: inline-block; transition: transform 0.2s ease; }
 
+          /* 嵌套明细表格横向化 */
           .detail-cell { padding: 0!important; background-color: #fcfdfe!important; }
           .inner-table-wrapper { padding: 10px 12px; background: #f4f8fb; border-bottom: 2px solid #e1e9f0; }
           .inner-title { font-size: 12px; color: #444; margin-bottom: 8px; font-weight: 500; }
@@ -409,6 +302,7 @@ export async function onRequestGet(context) {
           .pv-count { color: #27ae60; font-weight: bold; }
           .pv-yesterday { color: #8e44ad; font-weight: bold; }
 
+          /* 手机移动端全面横向适配 */
           @media (max-width: 600px) {
             body { padding: 10px; }
             .stats-grid { gap: 10px; }
@@ -417,34 +311,20 @@ export async function onRequestGet(context) {
             .stat-card .label { font-size: 11px; }
             .stat-card .tip { font-size: 9px; }
             th, td { padding: 6px 8px; font-size: 12px; }
-            .live-toast-container { right: 10px; left: 10px; bottom: 15px; }
           }
         </style>
       </head>
       <body>
-        <!-- 【直播间带货风】右下角弹幕悬浮卡片容器 -->
-        <div class="live-toast-container" id="liveToastContainer"></div>
-
         <div class="container">
           <div class="header">
-            <h1>📊 网站集群实时访客控制台</h1>
-          </div>
-
-          <!-- 【带货风】顶部实时播报跑马灯 -->
-          <div class="live-banner">
-            <div class="live-badge">
-              <div class="live-dot"></div>
-              LIVE 实时
-            </div>
-            <div class="live-text" id="liveMarquee">🔥 正在监控全网集群流量，每 5 秒自动同步最新访客...</div>
-            <div style="font-size: 11px; opacity: 0.9;">自动同步中</div>
+            <h1>📊 网站集群访客统计仪表盘</h1>
           </div>
 
           <!-- 1. 顶部概览（手机卡片并排） -->
           <div class="stats-grid">
             <div class="stat-card" onclick="toggleElement('today-detail-panel', 'today-icon')">
               <div class="label">今日访问量</div>
-              <div class="num" id="todayVisitsNum">${todayVisits}</div>
+              <div class="num">${todayVisits}</div>
               <div class="tip">👇 点击展开/收起今日明细 <span id="today-icon">▼</span></div>
             </div>
             <div class="stat-card" onclick="toggleElement('yesterday-detail-panel', 'yesterday-icon')">
@@ -454,10 +334,10 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 今日全量明细面板 -->
+          <!-- 今日全量明细面板（横向无缝滚动） -->
           <div class="panel" id="today-detail-panel" style="display: none; border: 2px solid #0066ff;">
             <h2 class="panel-title" style="color: #0066ff;">
-              📋 今日全量访问明细（共 <span id="todayTotalTitle">${todayVisits}</span> 条记录）
+              📋 今日全量访问明细（共 ${todayVisits} 条记录）
               <span class="sub-tip">⏱️ 今日 00:00 至今</span>
             </h2>
             <div class="scroll-x" style="max-height: 400px; overflow-y: auto;">
@@ -465,14 +345,14 @@ export async function onRequestGet(context) {
                 <thead>
                   <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
                 </thead>
-                <tbody id="todayTableBody">
+                <tbody>
                   ${todayTableRowsHtml}
                 </tbody>
               </table>
             </div>
           </div>
 
-          <!-- 昨日全量明细面板 -->
+          <!-- 昨日全量明细面板（横向无缝滚动） -->
           <div class="panel" id="yesterday-detail-panel" style="display: none; border: 2px solid #8e44ad;">
             <h2 class="panel-title" style="color: #8e44ad;">
               📜 昨日全量访问明细（共 ${yesterdayVisits} 条记录）
@@ -498,7 +378,7 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 3. 今日域名排行榜 -->
+          <!-- 3. 今日域名排行榜（支持横向滚动） -->
           <div class="panel">
             <h2 class="panel-title">
               🏆 今日域名流量排行榜 (点击展开明细)
@@ -521,7 +401,7 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
-          <!-- 4. 城市排行榜 -->
+          <!-- 4. 城市排行榜（支持横向滚动） -->
           <div class="panel">
             <h2 class="panel-title">
               🏙️ 热门访问城市排行榜 (点击展开明细)
@@ -564,89 +444,6 @@ export async function onRequestGet(context) {
               if (icon) icon.innerText = '▼';
             }
           }
-
-          // 【直播带货风】实时更新与弹幕喷涌模块
-          let lastSeenId = ${todayDetails[0] ? (todayDetails[0].id || 0) : 0};
-
-          function showLiveToast(record) {
-            const container = document.getElementById('liveToastContainer');
-            const toast = document.createElement('div');
-            toast.className = 'live-toast';
-            
-            toast.innerHTML = \`
-              <div class="live-avatar">⚡</div>
-              <div class="live-toast-content">
-                <div class="live-toast-title">🔥 刚有新访客进入直播间！</div>
-                <div class="live-toast-desc">
-                  来自 <strong>\${record.country} \${record.city}</strong> (\${record.ip})<br>
-                  访问目标: <span style="color:#40a9ff;">\${record.domain}</span>
-                </div>
-              </div>
-            \`;
-
-            container.appendChild(toast);
-
-            // 4秒后自动淡出消失
-            setTimeout(() => {
-              toast.style.animation = 'fadeOut 0.4s forwards';
-              setTimeout(() => toast.remove(), 400);
-            }, 4000);
-          }
-
-          async function checkRealtimeVisits() {
-            try {
-              const res = await fetch(window.location.pathname + window.location.search + "&action=realtime");
-              if (!res.ok) return;
-              const data = await res.json();
-              
-              if (data && data.latest && data.latest.length > 0) {
-                const latestRecord = data.latest[0];
-
-                // 更新今日访问数字
-                if (data.todayCount !== undefined) {
-                  const numEl = document.getElementById('todayVisitsNum');
-                  if (numEl && numEl.innerText != data.todayCount) {
-                    numEl.innerText = data.todayCount;
-                    numEl.style.transform = 'scale(1.3)';
-                    setTimeout(() => numEl.style.transform = 'scale(1)', 300);
-                    
-                    const titleEl = document.getElementById('todayTotalTitle');
-                    if (titleEl) titleEl.innerText = data.todayCount;
-                  }
-                }
-
-                // 判断是否有新访客 (根据最首条 ID 或时间)
-                if (lastSeenId && latestRecord.id > lastSeenId) {
-                  // 更新跑马灯
-                  document.getElementById('liveMarquee').innerHTML = 
-                    \`🎉 刚刚！来自 <strong>\${latestRecord.city}</strong> 的访客访问了域名 <strong>\${latestRecord.domain}</strong> (\${latestRecord.time})\`;
-
-                  // 触发右下角直播带货风弹幕
-                  showLiveToast(latestRecord);
-
-                  // 动态向今日表格顶部追加新行（无感无刷新）
-                  const tbody = document.getElementById('todayTableBody');
-                  if (tbody) {
-                    const newRow = document.createElement('tr');
-                    newRow.style.backgroundColor = '#e6f7ff';
-                    newRow.innerHTML = \`
-                      <td><strong>\${latestRecord.domain}</strong></td>
-                      <td><code>\${latestRecord.time}</code></td>
-                      <td><code>\${latestRecord.ip}</code></td>
-                      <td>\${latestRecord.country}</td>
-                      <td>\${latestRecord.city}</td>
-                    \`;
-                    tbody.insertBefore(newRow, tbody.firstChild);
-                  }
-                }
-
-                lastSeenId = latestRecord.id;
-              }
-            } catch(e) {}
-          }
-
-          // 每 5 秒轮询一次
-          setInterval(checkRealtimeVisits, 5000);
 
           (function drawChart() {
             const chartData = ${JSON.stringify(last7DaysData)};
@@ -740,7 +537,7 @@ export async function onRequestGet(context) {
   }
 }
 
-// 真实归属地精确解析逻辑
+// 解决“全显示香港”的真实归属地精确解析逻辑
 export async function handleVisitRecord(request, env) {
   const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for")?.split(',')[0] || "Unknown";
   let country = request.cf?.country || "Unknown";
