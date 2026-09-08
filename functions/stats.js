@@ -15,7 +15,7 @@ export async function onRequestGet(context) {
   }
 
   try {
-    // 自动初始化数据表及索引（针对 visit_time 建立索引是避免全表扫描的关键）
+    // 1. 分步创建数据表及索引（修复原多语句拼写导致的 D1_EXEC_ERROR 报错）
     await env.DB.exec(`
       CREATE TABLE IF NOT EXISTS visits (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -24,11 +24,14 @@ export async function onRequestGet(context) {
         city TEXT DEFAULT 'Unknown', 
         country TEXT DEFAULT 'Unknown', 
         visit_time DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-      CREATE INDEX IF NOT EXISTS idx_visits_time ON visits(visit_time);
+      )
     `);
 
-    // --- 1. 计算北京时间对应的 UTC 时间节点区间（替代 SQLite 函数以利用索引） ---
+    await env.DB.exec(`
+      CREATE INDEX IF NOT EXISTS idx_visits_time ON visits(visit_time)
+    `);
+
+    // --- 2. 计算北京时间对应的 UTC 时间节点区间（替代 SQLite 函数以利用索引） ---
     const now = new Date();
     // 获取当前北京时间对应的 Date 对象
     const bjNow = new Date(now.getTime() + 8 * 3600 * 1000);
@@ -46,7 +49,7 @@ export async function onRequestGet(context) {
     const sevenDaysAgoStartBJ = new Date(todayStartBJ.getTime() - 6 * 24 * 3600 * 1000);
     const sevenDaysAgoStartUTC = new Date(sevenDaysAgoStartBJ.getTime() - 8 * 3600 * 1000).toISOString().replace('T', ' ').replace('Z', '');
 
-    // --- 2. 使用 Promise.all 并发进行轻量化索引查询 ---
+    // --- 3. 使用 Promise.all 并发进行轻量化索引查询 ---
     const [
       todayRes,
       yesterdayRes,
@@ -91,7 +94,7 @@ export async function onRequestGet(context) {
     const todayDetails = todayDetailsRes?.results || [];
     const yesterdayDetails = yesterdayDetailsRes?.results || [];
 
-    // --- 3. JS 端处理近 7 天趋势数据计算 ---
+    // --- 4. JS 端处理近 7 天趋势数据计算 ---
     const dbDaysMap = {};
     (last7DaysRes?.results || []).forEach(row => {
       if (row.visit_time) {
@@ -114,7 +117,7 @@ export async function onRequestGet(context) {
       });
     }
 
-    // --- 4. JS 端处理域名与城市映射 ---
+    // --- 5. JS 端处理域名与城市映射 ---
     const domainRank = domainRankRes?.results || [];
     const yesterdayDomainMap = {};
     (yesterdayDomainRes?.results || []).forEach(item => { yesterdayDomainMap[item.domain] = item.domain_total; });
@@ -673,7 +676,7 @@ function translateCity(city) {
     'Shaoyang': '邵阳', 'Yueyang': '岳阳', 'Changde': '常德', 'Zhangjiajie': '张家界',
     'Yiyang': '益阳', 'Chenzhou': '郴州', 'Yongzhou': '永州', 'Huaihua': '怀化',
     'Loudi': '娄底', 'Xiangxi': '湘西',
-    'Chengdu': '成都', 'Zigong': '自贡', 'Panzhihua': '攀zhi花', 'Luzhou': '泸州',
+    'Chengdu': '成都', 'Zigong': '自贡', 'Panzhihua': '攀枝花', 'Luzhou': '泸州',
     'Deyang': '德阳', 'Mianyang': '绵阳', 'Guangyuan': '广元', 'Suining': '遂宁',
     'Neijiang': '内江', 'Leshan': '乐山', 'Nanchong': '南充', 'Meishan': '眉山',
     'Yibin': '宜宾', 'Guang\'an': '广安', 'Guangan': '广安', 'Dazhou': '达州',
