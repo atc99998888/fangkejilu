@@ -15,8 +15,10 @@ export async function onRequestGet(context) {
   }
 
   try {
-    // 1. 分步创建数据表及索引（修复原多语句拼写导致的 D1_EXEC_ERROR 报错）
-    await env.DB.exec(`
+    // =========================================================
+    // 1. 全自动初始化数据库表及索引（使用 prepare 逐条安全执行）
+    // =========================================================
+    await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS visits (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         domain TEXT NOT NULL, 
@@ -25,20 +27,19 @@ export async function onRequestGet(context) {
         country TEXT DEFAULT 'Unknown', 
         visit_time DATETIME DEFAULT CURRENT_TIMESTAMP
       )
-    `);
+    `).run();
 
-    await env.DB.exec(`
+    await env.DB.prepare(`
       CREATE INDEX IF NOT EXISTS idx_visits_time ON visits(visit_time)
-    `);
+    `).run();
 
-    // --- 2. 计算北京时间对应的 UTC 时间节点区间（替代 SQLite 函数以利用索引） ---
+    // --- 2. 计算北京时间对应的 UTC 时间节点区间 ---
     const now = new Date();
     // 获取当前北京时间对应的 Date 对象
     const bjNow = new Date(now.getTime() + 8 * 3600 * 1000);
     
     // 今日 00:00:00 (北京时间)
     const todayStartBJ = new Date(Date.UTC(bjNow.getUTCFullYear(), bjNow.getUTCMonth(), bjNow.getUTCDate()));
-    // 转换回 UTC 时间字符串传给 SQLite 比较
     const todayStartUTC = new Date(todayStartBJ.getTime() - 8 * 3600 * 1000).toISOString().replace('T', ' ').replace('Z', '');
     
     // 昨日 00:00:00 (北京时间)
@@ -49,7 +50,7 @@ export async function onRequestGet(context) {
     const sevenDaysAgoStartBJ = new Date(todayStartBJ.getTime() - 6 * 24 * 3600 * 1000);
     const sevenDaysAgoStartUTC = new Date(sevenDaysAgoStartBJ.getTime() - 8 * 3600 * 1000).toISOString().replace('T', ' ').replace('Z', '');
 
-    // --- 3. 使用 Promise.all 并发进行轻量化索引查询 ---
+    // --- 3. 并发查询基础数据 ---
     const [
       todayRes,
       yesterdayRes,
@@ -61,31 +62,31 @@ export async function onRequestGet(context) {
       cityRankRes,
       yesterdayCityRes
     ] = await Promise.all([
-      // 1. 获取【今日访问量】
+      // 1. 今日访问量
       env.DB.prepare(`SELECT COUNT(*) as count FROM visits WHERE visit_time >= ?`).bind(todayStartUTC).first(),
       
-      // 2. 获取【昨日访问量】
+      // 2. 昨日访问量
       env.DB.prepare(`SELECT COUNT(*) as count FROM visits WHERE visit_time >= ? AND visit_time < ?`).bind(yesterdayStartUTC, todayStartUTC).first(),
 
-      // 3. 查询【今日】明细记录（限流 200 条防爆）
+      // 3. 今日明细（限流 200 条）
       env.DB.prepare(`SELECT domain, ip, country, city, visit_time FROM visits WHERE visit_time >= ? ORDER BY id DESC LIMIT 200`).bind(todayStartUTC).all(),
 
-      // 4. 查询【昨日】明细记录（限流 200 条防爆）
+      // 4. 昨日明细（限流 200 条）
       env.DB.prepare(`SELECT domain, ip, country, city, visit_time FROM visits WHERE visit_time >= ? AND visit_time < ? ORDER BY id DESC LIMIT 200`).bind(yesterdayStartUTC, todayStartUTC).all(),
 
-      // 5. 获取最近 7 天每日访问明细（由 JS 按天归类，避免数据库解构函数）
+      // 5. 最近 7 天访问趋势数据
       env.DB.prepare(`SELECT visit_time FROM visits WHERE visit_time >= ?`).bind(sevenDaysAgoStartUTC).all(),
 
-      // 6. 今日域名数据
+      // 6. 今日域名排行榜
       env.DB.prepare(`SELECT domain, COUNT(*) as domain_total FROM visits WHERE visit_time >= ? GROUP BY domain ORDER BY domain_total DESC`).bind(todayStartUTC).all(),
 
-      // 7. 昨日域名数据
+      // 7. 昨日域名排行榜
       env.DB.prepare(`SELECT domain, COUNT(*) as domain_total FROM visits WHERE visit_time >= ? AND visit_time < ? GROUP BY domain`).bind(yesterdayStartUTC, todayStartUTC).all(),
 
-      // 8. 今日城市数据
+      // 8. 今日城市排行榜
       env.DB.prepare(`SELECT country, city, COUNT(*) as city_total FROM visits WHERE visit_time >= ? GROUP BY country, city ORDER BY city_total DESC`).bind(todayStartUTC).all(),
 
-      // 9. 昨日城市数据
+      // 9. 昨日城市排行榜
       env.DB.prepare(`SELECT country, city, COUNT(*) as city_total FROM visits WHERE visit_time >= ? AND visit_time < ? GROUP BY country, city`).bind(yesterdayStartUTC, todayStartUTC).all()
     ]);
 
@@ -94,11 +95,10 @@ export async function onRequestGet(context) {
     const todayDetails = todayDetailsRes?.results || [];
     const yesterdayDetails = yesterdayDetailsRes?.results || [];
 
-    // --- 4. JS 端处理近 7 天趋势数据计算 ---
+    // --- 4. JS 端处理近 7 天趋势数据 ---
     const dbDaysMap = {};
     (last7DaysRes?.results || []).forEach(row => {
       if (row.visit_time) {
-        // 将 UTC 时间转化为北京时间日期串 YYYY-MM-DD
         const d = new Date(row.visit_time + " UTC");
         const bjTime = new Date(d.getTime() + 8 * 3600 * 1000);
         const dateStr = bjTime.toISOString().split('T')[0];
@@ -126,7 +126,7 @@ export async function onRequestGet(context) {
     const yesterdayCityMap = {};
     (yesterdayCityRes?.results || []).forEach(item => { yesterdayCityMap[`${item.country}_${item.city}`] = item.city_total; });
 
-    // 渲染通用顶部卡片明细表格
+    // 渲染表格行
     const renderTableRows = (list) => {
       if (!list || list.length === 0) {
         return '<tr><td colspan="5" style="text-align:center; color:#999;">暂无访问记录</td></tr>';
@@ -145,7 +145,6 @@ export async function onRequestGet(context) {
     const todayTableRowsHtml = renderTableRows(todayDetails);
     const yesterdayTableRowsHtml = renderTableRows(yesterdayDetails);
 
-    // 构建【按域名归类】和【按城市归类】的数据映射
     const domainDetailsMap = {};
     const cityDetailsMap = {};
 
@@ -158,7 +157,7 @@ export async function onRequestGet(context) {
       cityDetailsMap[cityKey].push(item);
     });
 
-    // 生成域名排行榜 HTML
+    // 域名排行榜 HTML
     let domainRankHtml = domainRank.map((item, index) => {
       const domain = item.domain;
       const list = domainDetailsMap[domain] || [];
@@ -200,7 +199,7 @@ export async function onRequestGet(context) {
       `;
     }).join('');
 
-    // 生成城市排行榜 HTML
+    // 城市排行榜 HTML
     let cityRankHtml = cityRank.map((item, index) => {
       const cityKey = `${item.country}_${item.city}`;
       const list = cityDetailsMap[cityKey] || [];
@@ -276,20 +275,10 @@ export async function onRequestGet(context) {
           .chart-container { position: relative; width: 100%; height: 220px; margin-top: 10px; }
           canvas { width: 100%!important; height: 100%!important; }
 
-          .scroll-x {
-            width: 100%;
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-          }
+          .scroll-x { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
           table { width: 100%; border-collapse: collapse; margin-top: 4px; }
-          th, td { 
-            border: 1px solid #eef0f3; 
-            padding: 8px 10px; 
-            text-align: left; 
-            font-size: 13px; 
-            white-space: nowrap; 
-          }
+          th, td { border: 1px solid #eef0f3; padding: 8px 10px; text-align: left; font-size: 13px; white-space: nowrap; }
           th { background-color: #f8f9fa; color: #555; }
 
           tr.clickable-row { cursor: pointer; transition: background-color 0.15s ease; }
