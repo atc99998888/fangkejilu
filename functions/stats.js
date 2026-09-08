@@ -16,7 +16,7 @@ export async function onRequestGet(context) {
 
   try {
     // =========================================================
-    // 1. 全自动初始化数据库表及索引（使用 prepare 逐条安全执行）
+    // 1. 全自动初始化数据库表及索引
     // =========================================================
     await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS visits (
@@ -33,9 +33,8 @@ export async function onRequestGet(context) {
       CREATE INDEX IF NOT EXISTS idx_visits_time ON visits(visit_time)
     `).run();
 
-    // --- 2. 计算北京时间对应的 UTC 时间节点区间 ---
+    // 计算北京时间对应的 UTC 时间节点区间
     const now = new Date();
-    // 获取当前北京时间对应的 Date 对象
     const bjNow = new Date(now.getTime() + 8 * 3600 * 1000);
     
     // 今日 00:00:00 (北京时间)
@@ -50,7 +49,50 @@ export async function onRequestGet(context) {
     const sevenDaysAgoStartBJ = new Date(todayStartBJ.getTime() - 6 * 24 * 3600 * 1000);
     const sevenDaysAgoStartUTC = new Date(sevenDaysAgoStartBJ.getTime() - 8 * 3600 * 1000).toISOString().replace('T', ' ').replace('Z', '');
 
-    // --- 3. 并发查询基础数据 ---
+    // =========================================================
+    // 2. 处理“加载更多” AJAX 异步请求 API
+    // =========================================================
+    if (url.searchParams.get("action") === "load_more") {
+      const type = url.searchParams.get("type"); // 'today' 或 'yesterday'
+      const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+      const limit = parseInt(url.searchParams.get("limit") || "200", 10);
+
+      let querySql = "";
+      let params = [];
+
+      if (type === "today") {
+        querySql = `SELECT domain, ip, country, city, visit_time FROM visits WHERE visit_time >= ? ORDER BY id DESC LIMIT ? OFFSET ?`;
+        params = [todayStartUTC, limit, offset];
+      } else if (type === "yesterday") {
+        querySql = `SELECT domain, ip, country, city, visit_time FROM visits WHERE visit_time >= ? AND visit_time < ? ORDER BY id DESC LIMIT ? OFFSET ?`;
+        params = [yesterdayStartUTC, todayStartUTC, limit, offset];
+      } else {
+        return new Response(JSON.stringify({ error: "Invalid type" }), { status: 400 });
+      }
+
+      const res = await env.DB.prepare(querySql).bind(...params).all();
+      const rawList = res?.results || [];
+
+      // 格式化输出 JSON
+      const formattedList = rawList.map(row => ({
+        domain: punycodeToUnicode(row.domain),
+        visit_time: formatDate(row.visit_time),
+        ip: row.ip || 'Unknown',
+        country: translateCountry(row.country),
+        city: translateCity(row.city)
+      }));
+
+      return new Response(JSON.stringify({
+        data: formattedList,
+        hasMore: rawList.length === limit
+      }), {
+        headers: { "Content-Type": "application/json; charset=utf-8" }
+      });
+    }
+
+    // =========================================================
+    // 3. 页面首次加载：并发查询基础统计与首屏 50 条明细
+    // =========================================================
     const [
       todayRes,
       yesterdayRes,
@@ -62,17 +104,17 @@ export async function onRequestGet(context) {
       cityRankRes,
       yesterdayCityRes
     ] = await Promise.all([
-      // 1. 今日访问量
+      // 1. 今日总访问量
       env.DB.prepare(`SELECT COUNT(*) as count FROM visits WHERE visit_time >= ?`).bind(todayStartUTC).first(),
       
-      // 2. 昨日访问量
+      // 2. 昨日总访问量
       env.DB.prepare(`SELECT COUNT(*) as count FROM visits WHERE visit_time >= ? AND visit_time < ?`).bind(yesterdayStartUTC, todayStartUTC).first(),
 
-      // 3. 今日明细（限流 200 条）
-      env.DB.prepare(`SELECT domain, ip, country, city, visit_time FROM visits WHERE visit_time >= ? ORDER BY id DESC LIMIT 200`).bind(todayStartUTC).all(),
+      // 3. 今日明细（首屏加载 50 条）
+      env.DB.prepare(`SELECT domain, ip, country, city, visit_time FROM visits WHERE visit_time >= ? ORDER BY id DESC LIMIT 50`).bind(todayStartUTC).all(),
 
-      // 4. 昨日明细（限流 200 条）
-      env.DB.prepare(`SELECT domain, ip, country, city, visit_time FROM visits WHERE visit_time >= ? AND visit_time < ? ORDER BY id DESC LIMIT 200`).bind(yesterdayStartUTC, todayStartUTC).all(),
+      // 4. 昨日明细（首屏加载 50 条）
+      env.DB.prepare(`SELECT domain, ip, country, city, visit_time FROM visits WHERE visit_time >= ? AND visit_time < ? ORDER BY id DESC LIMIT 50`).bind(yesterdayStartUTC, todayStartUTC).all(),
 
       // 5. 最近 7 天访问趋势数据
       env.DB.prepare(`SELECT visit_time FROM visits WHERE visit_time >= ?`).bind(sevenDaysAgoStartUTC).all(),
@@ -95,7 +137,7 @@ export async function onRequestGet(context) {
     const todayDetails = todayDetailsRes?.results || [];
     const yesterdayDetails = yesterdayDetailsRes?.results || [];
 
-    // --- 4. JS 端处理近 7 天趋势数据 ---
+    // 处理近 7 天趋势数据
     const dbDaysMap = {};
     (last7DaysRes?.results || []).forEach(row => {
       if (row.visit_time) {
@@ -117,7 +159,7 @@ export async function onRequestGet(context) {
       });
     }
 
-    // --- 5. JS 端处理域名与城市映射 ---
+    // 处理域名与城市映射
     const domainRank = domainRankRes?.results || [];
     const yesterdayDomainMap = {};
     (yesterdayDomainRes?.results || []).forEach(item => { yesterdayDomainMap[item.domain] = item.domain_total; });
@@ -126,7 +168,7 @@ export async function onRequestGet(context) {
     const yesterdayCityMap = {};
     (yesterdayCityRes?.results || []).forEach(item => { yesterdayCityMap[`${item.country}_${item.city}`] = item.city_total; });
 
-    // 渲染表格行
+    // 渲染表格行函数
     const renderTableRows = (list) => {
       if (!list || list.length === 0) {
         return '<tr><td colspan="5" style="text-align:center; color:#999;">暂无访问记录</td></tr>';
@@ -182,7 +224,7 @@ export async function onRequestGet(context) {
         <tr id="domain-detail-${index}" class="detail-row" style="display: none;">
           <td colspan="4" class="detail-cell">
             <div class="inner-table-wrapper">
-              <div class="inner-title">🌐 域名 <strong>${escapeHtml(punycodeToUnicode(domain))}</strong> 今日访问明细：</div>
+              <div class="inner-title">🌐 域名 <strong>${escapeHtml(punycodeToUnicode(domain))}</strong> 今日最新访问明细：</div>
               <div class="scroll-x">
                 <table>
                   <thead>
@@ -224,7 +266,7 @@ export async function onRequestGet(context) {
         <tr id="city-detail-${index}" class="detail-row" style="display: none;">
           <td colspan="5" class="detail-cell">
             <div class="inner-table-wrapper">
-              <div class="inner-title">🏙️ 城市 <strong>${translateCity(item.city)}</strong> 今日来源域名与时间明细：</div>
+              <div class="inner-title">🏙️ 城市 <strong>${translateCity(item.city)}</strong> 今日最新来源明细：</div>
               <div class="scroll-x">
                 <table>
                   <thead>
@@ -300,6 +342,25 @@ export async function onRequestGet(context) {
           .pv-count { color: #27ae60; font-weight: bold; }
           .pv-yesterday { color: #8e44ad; font-weight: bold; }
 
+          /* 加载更多按钮样式 */
+          .load-more-btn {
+            display: block;
+            width: 100%;
+            padding: 10px;
+            margin-top: 12px;
+            background: #f0f7ff;
+            color: #0066ff;
+            border: 1px dashed #0066ff;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s ease;
+          }
+          .load-more-btn:hover { background: #e0efff; }
+          .load-more-btn:disabled { background: #f5f5f5; color: #ccc; border-color: #ccc; cursor: not-allowed; }
+
           @media (max-width: 600px) {
             body { padding: 10px; }
             .stats-grid { gap: 10px; }
@@ -330,9 +391,10 @@ export async function onRequestGet(context) {
             </div>
           </div>
 
+          <!-- 今日明细面板 -->
           <div class="panel" id="today-detail-panel" style="display: none; border: 2px solid #0066ff;">
             <h2 class="panel-title" style="color: #0066ff;">
-              📋 今日全量访问明细（共 ${todayVisits} 条记录，多于200条仅展示最新200条）
+              📋 今日全量访问明细（共 ${todayVisits} 条记录）
               <span class="sub-tip">⏱️ 今日 00:00 至今</span>
             </h2>
             <div class="scroll-x" style="max-height: 400px; overflow-y: auto;">
@@ -340,16 +402,18 @@ export async function onRequestGet(context) {
                 <thead>
                   <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
                 </thead>
-                <tbody>
+                <tbody id="today-table-body">
                   ${todayTableRowsHtml}
                 </tbody>
               </table>
             </div>
+            ${todayVisits > 50 ? `<button class="load-more-btn" id="today-load-more-btn" onclick="fetchMoreData('today')">👇 点击加载更多 200 条记录</button>` : ''}
           </div>
 
+          <!-- 昨日明细面板 -->
           <div class="panel" id="yesterday-detail-panel" style="display: none; border: 2px solid #8e44ad;">
             <h2 class="panel-title" style="color: #8e44ad;">
-              📜 昨日全量访问明细（共 ${yesterdayVisits} 条记录，多于200条仅展示最新200条）
+              📜 昨日全量访问明细（共 ${yesterdayVisits} 条记录）
               <span class="sub-tip" style="color: #8e44ad;">⏱️ 昨日全天</span>
             </h2>
             <div class="scroll-x" style="max-height: 400px; overflow-y: auto;">
@@ -357,11 +421,12 @@ export async function onRequestGet(context) {
                 <thead>
                   <tr><th>访问域名</th><th>访问时间 (北京时间)</th><th>访客 IP</th><th>国家 / 地区</th><th>城市</th></tr>
                 </thead>
-                <tbody>
+                <tbody id="yesterday-table-body">
                   ${yesterdayTableRowsHtml}
                 </tbody>
               </table>
             </div>
+            ${yesterdayVisits > 50 ? `<button class="load-more-btn" id="yesterday-load-more-btn" onclick="fetchMoreData('yesterday')">👇 点击加载更多 200 条记录</button>` : ''}
           </div>
 
           <div class="panel">
@@ -419,6 +484,12 @@ export async function onRequestGet(context) {
         </div>
 
         <script>
+          // 分页 Offset 偏移量管理
+          const offsets = {
+            today: 50,
+            yesterday: 50
+          };
+
           function toggleElement(contentId, iconId) {
             const content = document.getElementById(contentId);
             const icon = document.getElementById(iconId);
@@ -434,6 +505,60 @@ export async function onRequestGet(context) {
               content.style.display = 'none';
               if (icon) icon.innerText = '▼';
             }
+          }
+
+          // 动态加载更多数据函数
+          async function fetchMoreData(type) {
+            const btn = document.getElementById(type + '-load-more-btn');
+            const tbody = document.getElementById(type + '-table-body');
+            if (!btn || !tbody) return;
+
+            btn.disabled = true;
+            btn.innerText = '⏳ 正在拉取数据...';
+
+            try {
+              const currentUrl = new URL(window.location.href);
+              currentUrl.searchParams.set('action', 'load_more');
+              currentUrl.searchParams.set('type', type);
+              currentUrl.searchParams.set('offset', offsets[type]);
+              currentUrl.searchParams.set('limit', 200);
+
+              const res = await fetch(currentUrl.toString());
+              if (!res.ok) throw new Error('请求失败');
+              
+              const result = await res.json();
+              const list = result.data || [];
+
+              if (list.length > 0) {
+                const htmlRows = list.map(row => \`
+                  <tr>
+                    <td><strong>\${escapeHtml(row.domain)}</strong></td>
+                    <td><code>\${row.visit_time}</code></td>
+                    <td><code>\${escapeHtml(row.ip)}</code></td>
+                    <td>\${row.country}</td>
+                    <td>\${row.city}</td>
+                  </tr>
+                \`).join('');
+
+                tbody.insertAdjacentHTML('beforeend', htmlRows);
+                offsets[type] += list.length;
+              }
+
+              if (result.hasMore) {
+                btn.disabled = false;
+                btn.innerText = '👇 点击加载更多 200 条记录';
+              } else {
+                btn.innerText = '✅ 已加载全部访问记录';
+                btn.disabled = true;
+              }
+            } catch (err) {
+              btn.disabled = false;
+              btn.innerText = '❌ 加载失败，点击重试';
+            }
+          }
+
+          function escapeHtml(str) {
+            return String(str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
           }
 
           (function drawChart() {
@@ -528,7 +653,7 @@ export async function onRequestGet(context) {
   }
 }
 
-// 解决“全显示香港”的真实归属地精确解析逻辑
+// 精确 IP 归属地解析逻辑
 export async function handleVisitRecord(request, env) {
   const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for")?.split(',')[0] || "Unknown";
   let country = request.cf?.country || "Unknown";
